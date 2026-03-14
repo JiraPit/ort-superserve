@@ -1,7 +1,7 @@
 flowchart LR
-    R1["Request 1"] -->|"mpsc"| Batcher["📬 Batcher"]
-    R2["Request 2"] -->|"mpsc"| Batcher
-    R3["Request 3"] -->|"mpsc"| Batcher
+    R1["Request 1"] -->|"input"| Batcher["📬 Batcher"]
+    R2["Request 2"] -->|"input"| Batcher
+    R3["Request 3"] -->|"input"| Batcher
     
     subgraph INSIDE["ort-superserve"]
         direction LR
@@ -27,14 +27,14 @@ flowchart LR
             PP1 ~~~ PP2 ~~~ PP3
         end
         
-        Batcher -->|"dispatch"| P
-        P -->|"batch"| S
+        Batcher -->|"batch"| P
+        P -->|"matrix"| S
         S -->|"slice"| PP
     end
     
-    PP -->|"oneshot"| O1["Response 1"]
-    PP -->|"oneshot"| O2["Response 2"]
-    PP -->|"oneshot"| O3["Response 3"]
+    PP -->|"output"| O1["Response 1"]
+    PP -->|"output"| O2["Response 2"]
+    PP -->|"output"| O3["Response 3"]
     
     style INSIDE fill:#f5f5f5,stroke:#333,stroke-width:2px
     style Batcher fill:#fff3e0
