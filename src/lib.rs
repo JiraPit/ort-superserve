@@ -1,18 +1,31 @@
-//! A high-level ONNX Runtime session orchestrator for serving models with
-//! dynamic batching and parallel processing.
+//! A "thin" asynchronous ONNX Runtime session orchestrator for high-throughput model serving.
+//!
+//! Orchestrates a pool of ONNX sessions with dynamic batching and parallel processing,
+//! enabling thousands of concurrent requests to share the same model without mutex
+//! contention on the hot path.
 //!
 //! # Features
 //!
-//! - **Actor model with dynamic batching**: Incoming requests are collected
-//!   into batches before inference. The batcher waits until either
-//!   `max_batch_size` is reached or `max_wait_time` elapses.
-//! - **Built on `ort` crate**: Supports all execution providers (CPU, CUDA,
-//!   TensorRT, XNNPACK, CoreML).
-//! - **Works with all input/output types**: Define custom `Input` and `Output`
-//!   traits for any data type.
-//! - **Session pool**: Multiple ONNX sessions for full hardware utilization.
-//! - **Parallel pre/post-processing**: Concurrent preprocessing and
-//!   postprocessing with `JoinSet`.
+//! - **Lock-free**: Unlike the naive approach of wrapping an ONNX session in
+//!   `Arc<Mutex<Session>>` which creates a bottleneck under load, ort-superserve
+//!   uses an actor model where requests flow through channels instead of locks,
+//!   and a session pool where multiple ONNX sessions run in parallel on dedicated
+//!   threads—zero mutex on the hot path.
+//! - **Dynamic batching**: Incoming requests are collected into batches before being
+//!   sent to inference. The batcher waits until either `max_batch_size` is reached
+//!   or `max_wait_time` elapses, ensuring optimal GPU/CPU utilization.
+//! - **Built on [`ort`] crate**: Uses the mature ONNX Runtime bindings directly,
+//!   supporting all execution providers: CPU (default), CUDA, TensorRT, XNNPACK,
+//!   and CoreML.
+//! - **Works with all input/output types**: The `Input` and `Output` traits let you
+//!   define custom preprocessing and postprocessing logic for any data type.
+//! - **Session pool**: Multiple ONNX sessions run in parallel, each with fewer
+//!   threads, achieving near-linear scaling with core count.
+//! - **Parallel pre/post-processing**: Preprocessing and postprocessing run
+//!   concurrently using `JoinSet`, pipelining CPU work while the GPU handles
+//!   inference.
+//!
+//! [`ort`]: https://crates.io/crates/ort
 //!
 //! # Example
 //!

@@ -106,7 +106,7 @@ mod input_tests {
 
         let result = MockInput::batch(items);
 
-        assert!(result.is_err() || result.unwrap().shape().len() == 0);
+        assert!(result.is_err() || result.unwrap().shape().is_empty());
     }
 }
 

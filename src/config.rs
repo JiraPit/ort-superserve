@@ -6,11 +6,12 @@ use std::time::Duration;
 /// Specifies which hardware accelerator to use for running the model.
 /// Different providers offer different performance characteristics depending
 /// on the hardware available.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub enum ExecutionProvider {
     /// CPU execution using the default ONNX Runtime CPU provider.
     ///
     /// This is the default and works on all platforms without additional dependencies.
+    #[default]
     Cpu,
 
     /// NVIDIA CUDA GPU execution.
@@ -41,12 +42,6 @@ pub enum ExecutionProvider {
     ///
     /// Requires the `coreml` feature to be enabled.
     CoreML,
-}
-
-impl Default for ExecutionProvider {
-    fn default() -> Self {
-        Self::Cpu
-    }
 }
 
 /// Configuration for the inference server.

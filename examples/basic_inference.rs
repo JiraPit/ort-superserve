@@ -22,6 +22,7 @@ impl Input for ImageInput {
 
 #[derive(Debug)]
 struct DetectionOutput {
+    #[allow(dead_code)]
     scores: Vec<f32>,
 }
 
