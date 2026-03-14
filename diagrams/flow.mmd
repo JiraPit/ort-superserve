@@ -1,0 +1,66 @@
+flowchart LR
+    subgraph Clients["Multiple Clients"]
+        R1["Request 1"]
+        R2["Request 2"]
+        R3["Request 3"]
+        R4["Request N"]
+    end
+
+    subgraph Batcher["Batcher (Actor)"]
+        BC["Collect Requests"]
+        BT["Wait: batch_size OR timeout"]
+    end
+
+    subgraph Preprocessors["Parallel Preprocessors"]
+        P1["Preprocess 1"]
+        P2["Preprocess 2"]
+        P3["Preprocess 3"]
+        PN["Preprocess N"]
+    end
+
+    subgraph Pool["ONNX Session Pool"]
+        W1["Session 1<br/>(Thread)"]
+        W2["Session 2<br/>(Thread)"]
+        W3["Session M<br/>(Thread)"]
+    end
+
+    subgraph Postprocessors["Parallel Postprocessors"]
+        PP1["Postprocess 1"]
+        PP2["Postprocess 2"]
+        PP3["Postprocess 3"]
+        PPN["Postprocess N"]
+    end
+
+    subgraph Responses["Responses"]
+        O1["Response 1"]
+        O2["Response 2"]
+        O3["Response 3"]
+        O4["Response N"]
+    end
+
+    R1 --> BC
+    R2 --> BC
+    R3 --> BC
+    R4 --> BC
+    
+    BC --> BT
+    
+    BT --> P1
+    BT --> P2
+    BT --> P3
+    BT --> PN
+    
+    P1 --> |"Batch"| W1
+    P2 --> |"Batch"| W1
+    P3 --> |"Batch"| W2
+    PN --> |"Batch"| W3
+    
+    W1 --> |"Sliced"| PP1
+    W1 --> |"Sliced"| PP2
+    W2 --> |"Sliced"| PP3
+    W3 --> |"Sliced"| PPN
+    
+    PP1 --> O1
+    PP2 --> O2
+    PP3 --> O3
+    PPN --> O4
