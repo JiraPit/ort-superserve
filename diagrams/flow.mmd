@@ -1,10 +1,12 @@
 flowchart LR
-    Requests["📥 Requests"] -->|"mpsc channel"| Batcher["📬 Batcher"]
+    R1["Request 1"] -->|"mpsc"| Batcher["📬 Batcher"]
+    R2["Request 2"] -->|"mpsc"| Batcher
+    R3["Request 3"] -->|"mpsc"| Batcher
     
     subgraph INSIDE["ort-superserve"]
         direction LR
         
-        subgraph P["⚡ Preprocess\n(JoinSet)"]
+        subgraph P["⚡ Preprocess"]
             P1["Worker 1"]
             P2["Worker 2"]
             P3["..."]
@@ -18,7 +20,7 @@ flowchart LR
             S1 ~~~ S2 ~~~ S3
         end
         
-        subgraph PP["⚡ Postprocess\n(JoinSet)"]
+        subgraph PP["⚡ Postprocess"]
             PP1["Worker 1"]
             PP2["Worker 2"]
             PP3["..."]
@@ -30,12 +32,18 @@ flowchart LR
         S -->|"slice"| PP
     end
     
-    PP -->|"oneshot channel"| Responses["📤 Responses"]
-
+    PP -->|"oneshot"| O1["Response 1"]
+    PP -->|"oneshot"| O2["Response 2"]
+    PP -->|"oneshot"| O3["Response 3"]
+    
     style INSIDE fill:#f5f5f5,stroke:#333,stroke-width:2px
-    style Requests fill:#e3f2fd
-    style Responses fill:#e3f2fd
     style Batcher fill:#fff3e0
     style P fill:#e8f5e9
     style S fill:#fce4ec
     style PP fill:#e8f5e9
+    style R1 fill:#e3f2fd
+    style R2 fill:#e3f2fd
+    style R3 fill:#e3f2fd
+    style O1 fill:#e3f2fd
+    style O2 fill:#e3f2fd
+    style O3 fill:#e3f2fd
