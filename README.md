@@ -16,7 +16,9 @@ When serving a model to many users, the naive approach of wrapping an ONNX sessi
 
 - **Actor model with dynamic batching**: Incoming requests are collected into batches before being sent to inference. The batcher waits until either `max_batch_size` is reached or `max_wait_time` elapses, ensuring optimal GPU/CPU utilization. Without batching, each request would incur the full overhead of model invocation, resulting in poor throughput.
 
-- **Built on `ort` crate**: Uses the mature ONNX Runtime bindings directly, supporting all execution providers that ONNX Runtime offers: CPU (default), CUDA, TensorRT, XNNPACK, and CoreML. This means you can deploy the same model on different hardware accelerators without code changes.
+- **Built on [`ort`] crate**: Uses the mature ONNX Runtime bindings directly, supporting all execution providers that ONNX Runtime offers: CPU (default), CUDA, TensorRT, XNNPACK, and CoreML. This means you can deploy the same model on different hardware accelerators without code changes.
+
+[`ort`]: https://crates.io/crates/ort
 
 - **Works with all input/output types**: The `Input` and `Output` traits let you define custom preprocessing and postprocessing logic for any data type—images, text, audio, video, or complex structs. You implement `preprocess`, `batch`, and `postprocess`; the library handles the orchestration.
 
