@@ -1,18 +1,16 @@
 # ort-superserve
 
-An ONNX Runtime session orchestrator for high-throughput model serving.
+An asynchronous ONNX Runtime session orchestrator for high-throughput model serving.
 
 Orchestrates a pool of ONNX sessions with dynamic batching and parallel processing, enabling thousands of concurrent requests to share the same model without mutex contention on the hot path.
-
-## Why This Matters for Concurrent Serving
-
-When serving a model to many users, the naive approach of wrapping an ONNX session in `Arc<Mutex<Session>>` creates a bottleneck: every request must acquire the lock, causing contention under load. ort-superserve solves this with an actor model where requests flow through channels instead of locks, and a session pool where multiple ONNX sessions run in parallel on dedicated threads—zero mutex on the hot path.
 
 ## Architecture
 
 ![Architecture Diagram](diagrams/flow.png)
 
 ## Features
+
+- **Lock-free**: Unlike the naive approach of wrapping an ONNX session in `Arc<Mutex<Session>>` which creates a bottleneck under load, ort-superserve uses an actor model where requests flow through channels instead of locks, and a session pool where multiple ONNX sessions run in parallel on dedicated threads—zero mutex on the hot path.
 
 - **Actor model with dynamic batching**: Incoming requests are collected into batches before being sent to inference. The batcher waits until either `max_batch_size` is reached or `max_wait_time` elapses, ensuring optimal GPU/CPU utilization. Without batching, each request would incur the full overhead of model invocation, resulting in poor throughput.
 
