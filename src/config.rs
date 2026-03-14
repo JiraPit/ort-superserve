@@ -1,12 +1,31 @@
 use ort::session::builder::GraphOptimizationLevel;
+use std::sync::Arc;
 use std::time::Duration;
+
+/// Type alias for a custom execution provider callback.
+///
+/// The callback receives a session builder and returns a configured builder.
+/// This allows arbitrary customization of the ONNX Runtime session.
+///
+/// Note: The error type is `ort::Error<SessionBuilder>` which allows recovering
+/// the builder from errors. Use `.map_err(|e| e.to_string())` if you need
+/// to convert errors to strings.
+pub type SessionBuilderCallback = Arc<
+    dyn Fn(
+            ort::session::builder::SessionBuilder,
+        ) -> Result<
+            ort::session::builder::SessionBuilder,
+            ort::Error<ort::session::builder::SessionBuilder>,
+        > + Send
+        + Sync,
+>;
 
 /// Execution provider for ONNX Runtime inference.
 ///
 /// Specifies which hardware accelerator to use for running the model.
 /// Different providers offer different performance characteristics depending
 /// on the hardware available.
-#[derive(Clone, Debug, Default)]
+#[derive(Default)]
 pub enum ExecutionProvider {
     /// CPU execution using the default ONNX Runtime CPU provider.
     ///
@@ -42,6 +61,62 @@ pub enum ExecutionProvider {
     ///
     /// Requires the `coreml` feature to be enabled.
     CoreML,
+
+    /// Custom execution provider with a callback.
+    ///
+    /// Allows arbitrary configuration of the ONNX Runtime session builder.
+    /// Use this for providers not covered by the built-in variants or for
+    /// advanced configuration options.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use ort_superserve::ExecutionProvider;
+    /// use std::sync::Arc;
+    ///
+    /// let custom = ExecutionProvider::Custom(Arc::new(|builder| {
+    ///     builder.with_memory_pattern(true)
+    /// }));
+    /// ```
+    Custom(SessionBuilderCallback),
+}
+
+impl Clone for ExecutionProvider {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Cpu => Self::Cpu,
+            Self::Cuda { device_id } => Self::Cuda {
+                device_id: *device_id,
+            },
+            Self::TensorRT { device_id, fp16 } => Self::TensorRT {
+                device_id: *device_id,
+                fp16: *fp16,
+            },
+            Self::Xnnpack => Self::Xnnpack,
+            Self::CoreML => Self::CoreML,
+            Self::Custom(callback) => Self::Custom(Arc::clone(callback)),
+        }
+    }
+}
+
+impl std::fmt::Debug for ExecutionProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Cpu => write!(f, "Cpu"),
+            Self::Cuda { device_id } => f
+                .debug_struct("Cuda")
+                .field("device_id", device_id)
+                .finish(),
+            Self::TensorRT { device_id, fp16 } => f
+                .debug_struct("TensorRT")
+                .field("device_id", device_id)
+                .field("fp16", fp16)
+                .finish(),
+            Self::Xnnpack => write!(f, "Xnnpack"),
+            Self::CoreML => write!(f, "CoreML"),
+            Self::Custom(_) => write!(f, "Custom(<callback>)"),
+        }
+    }
 }
 
 /// Configuration for the inference server.

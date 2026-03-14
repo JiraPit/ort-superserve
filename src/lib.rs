@@ -77,7 +77,7 @@ pub mod server;
 pub mod session;
 pub mod traits;
 
-pub use config::{ExecutionProvider, ServerConfig};
+pub use config::{ExecutionProvider, ServerConfig, SessionBuilderCallback};
 pub use error::Error;
 pub use server::Server;
 pub use traits::{Input, Output};

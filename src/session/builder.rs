@@ -121,6 +121,9 @@ impl SessionBuilder {
                     )
                 }
             }
+            ExecutionProvider::Custom(callback) => {
+                callback(builder).map_err(|e| anyhow::Error::msg(e.to_string()))
+            }
         }
     }
 }
