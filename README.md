@@ -6,12 +6,11 @@ Orchestrates a pool of ONNX sessions with dynamic batching and parallel processi
 
 ## Why This Matters for Concurrent Serving
 
-When serving a model to many users, the naive approach of wrapping an ONNX session in `Arc<Mutex<Session>>` creates a bottleneck: every request must acquire the lock, causing contention under load.
+When serving a model to many users, the naive approach of wrapping an ONNX session in `Arc<Mutex<Session>>` creates a bottleneck: every request must acquire the lock, causing contention under load. ort-superserve solves this with an actor model where requests flow through channels instead of locks, and a session pool where multiple ONNX sessions run in parallel on dedicated threads—zero mutex on the hot path.
 
-ort-superserve avoids this entirely:
-- **Actor model**: requests flow through channels, not locks
-- **Session pool**: multiple sessions run in parallel, each on its own thread
-- **Zero mutex on hot path**: the inference path never blocks on a mutex
+## Architecture
+
+![Architecture Diagram](diagrams/flow.png)
 
 ## Features
 
@@ -111,27 +110,6 @@ let config = ServerConfig::new()
     .with_execution_provider(ExecutionProvider::Cuda { device_id: 0 });
 ```
 
-## Execution Flow
-
-```
-Requests ──► Batcher (collects until batch_size or timeout)
-                 │
-                 ▼
-        JoinSet: parallel preprocess
-                 │
-                 ▼
-            Input::batch()
-                 │
-                 ▼
-        Worker Pool (multiple ONNX sessions)
-                 │
-                 ▼
-        JoinSet: parallel postprocess
-                 │
-                 ▼
-            Return to clients
-```
-
 ## Loading Models
 
 ```rust
@@ -165,32 +143,14 @@ async fn main() -> anyhow::Result<()> {
         .route("/infer", post(infer_handler))
         .with_state(server);
 
-    axum::Server::bind(&"0.0.0.0:3000".parse()?)
-        .serve(app.into_make_service())
-        .await?;
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await?;
+    axum::serve(listener, app).await?;
 
     Ok(())
 }
 ```
 
 See `examples/axum_server.rs` for a complete example with graceful shutdown.
-
-## Concurrent Requests
-
-```rust
-let server = Arc::new(Server::<ImageInput, DetectionOutput>::from_file("model.onnx", config).await?);
-
-let handles: Vec<_> = (0..10)
-    .map(|_| {
-        let server = server.clone();
-        tokio::spawn(async move {
-            server.infer(ImageInput { data: my_data.clone() }).await
-        })
-    })
-    .collect();
-
-let results = futures::future::try_join_all(handles).await?;
-```
 
 ## License
 

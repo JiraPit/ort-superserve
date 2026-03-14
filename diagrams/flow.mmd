@@ -1,66 +1,41 @@
 flowchart LR
-    subgraph Clients["Multiple Clients"]
-        R1["Request 1"]
-        R2["Request 2"]
-        R3["Request 3"]
-        R4["Request N"]
-    end
-
-    subgraph Batcher["Batcher (Actor)"]
-        BC["Collect Requests"]
-        BT["Wait: batch_size OR timeout"]
-    end
-
-    subgraph Preprocessors["Parallel Preprocessors"]
-        P1["Preprocess 1"]
-        P2["Preprocess 2"]
-        P3["Preprocess 3"]
-        PN["Preprocess N"]
-    end
-
-    subgraph Pool["ONNX Session Pool"]
-        W1["Session 1<br/>(Thread)"]
-        W2["Session 2<br/>(Thread)"]
-        W3["Session M<br/>(Thread)"]
-    end
-
-    subgraph Postprocessors["Parallel Postprocessors"]
-        PP1["Postprocess 1"]
-        PP2["Postprocess 2"]
-        PP3["Postprocess 3"]
-        PPN["Postprocess N"]
-    end
-
-    subgraph Responses["Responses"]
-        O1["Response 1"]
-        O2["Response 2"]
-        O3["Response 3"]
-        O4["Response N"]
-    end
-
-    R1 --> BC
-    R2 --> BC
-    R3 --> BC
-    R4 --> BC
+    Requests["📥 Requests"] -->|"mpsc channel"| Batcher["📬 Batcher"]
     
-    BC --> BT
+    subgraph INSIDE["ort-superserve"]
+        direction LR
+        
+        subgraph P["⚡ Preprocess\n(JoinSet)"]
+            P1["Worker 1"]
+            P2["Worker 2"]
+            P3["..."]
+            P1 ~~~ P2 ~~~ P3
+        end
+        
+        subgraph S["🔥 Session Pool"]
+            S1["Session 1"]
+            S2["Session 2"]
+            S3["..."]
+            S1 ~~~ S2 ~~~ S3
+        end
+        
+        subgraph PP["⚡ Postprocess\n(JoinSet)"]
+            PP1["Worker 1"]
+            PP2["Worker 2"]
+            PP3["..."]
+            PP1 ~~~ PP2 ~~~ PP3
+        end
+        
+        Batcher -->|"dispatch"| P
+        P -->|"batch()"| S
+        S -->|"slice"| PP
+    end
     
-    BT --> P1
-    BT --> P2
-    BT --> P3
-    BT --> PN
-    
-    P1 --> |"Batch"| W1
-    P2 --> |"Batch"| W1
-    P3 --> |"Batch"| W2
-    PN --> |"Batch"| W3
-    
-    W1 --> |"Sliced"| PP1
-    W1 --> |"Sliced"| PP2
-    W2 --> |"Sliced"| PP3
-    W3 --> |"Sliced"| PPN
-    
-    PP1 --> O1
-    PP2 --> O2
-    PP3 --> O3
-    PPN --> O4
+    PP -->|"oneshot channel"| Responses["📤 Responses"]
+
+    style INSIDE fill:#f5f5f5,stroke:#333,stroke-width:2px
+    style Requests fill:#e3f2fd
+    style Responses fill:#e3f2fd
+    style Batcher fill:#fff3e0
+    style P fill:#e8f5e9
+    style S fill:#fce4ec
+    style PP fill:#e8f5e9
