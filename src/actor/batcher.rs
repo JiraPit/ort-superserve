@@ -4,8 +4,8 @@ use crate::config::ServerConfig;
 use crate::traits::{Input, Output};
 use anyhow::Result;
 use ndarray::ArrayD;
+use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::mpsc::Sender as StdSender;
 use tokio::task::JoinSet;
 
 /// Task that collects requests, batches them, and dispatches to workers.
@@ -25,7 +25,7 @@ impl BatcherTask {
     /// # Arguments
     ///
     /// * `command_rx` - Channel for receiving commands from the server.
-    /// * `worker_tx` - Channel for sending batched tensors to workers.
+    /// * `worker_txs` - Per-worker channels for lock-free dispatch.
     /// * `config` - Server configuration.
     /// * `input_name` - Name of the ONNX input tensor.
     /// * `output_name` - Name of the ONNX output tensor.
@@ -35,13 +35,15 @@ impl BatcherTask {
     /// A `JoinHandle` for the spawned task.
     pub fn spawn<I: Input, O: Output>(
         mut command_rx: tokio::sync::mpsc::UnboundedReceiver<Command<I, O>>,
-        worker_tx: StdSender<WorkerMessage>,
+        worker_txs: Vec<tokio::sync::mpsc::UnboundedSender<WorkerMessage>>,
         config: Arc<ServerConfig>,
         input_name: String,
         output_name: String,
     ) -> tokio::task::JoinHandle<()> {
         tokio::spawn(async move {
             let mut batch_buffer: Vec<Command<I, O>> = Vec::with_capacity(config.max_batch_size);
+            let num_workers = worker_txs.len();
+            let mut dispatch_index: usize = 0;
 
             loop {
                 // Wait for first command
@@ -89,29 +91,62 @@ impl BatcherTask {
                 let batch_len = batch_buffer.len();
                 tracing::info!("Batcher: Processing batch of {} items...", batch_len);
 
-                // Run preprocessing in parallel
+                // Run preprocessing in parallel with index tracking to preserve order
                 let mut preprocess_tasks = JoinSet::new();
                 let mut responders: Vec<tokio::sync::oneshot::Sender<Result<O>>> =
                     Vec::with_capacity(batch_len);
 
-                for cmd in batch_buffer.drain(..) {
+                for (idx, cmd) in batch_buffer.drain(..).enumerate() {
                     responders.push(cmd.responder);
-                    preprocess_tasks.spawn(async move { cmd.input.preprocess().await });
+                    preprocess_tasks.spawn(async move { (idx, cmd.input.preprocess().await) });
                 }
 
-                let mut preprocessed_items = Vec::with_capacity(batch_len);
+                // Collect results with index tracking
+                let mut results: HashMap<usize, I::Preprocessed> = HashMap::new();
+                let mut failed_indices: Vec<usize> = Vec::new();
 
                 while let Some(result) = preprocess_tasks.join_next().await {
                     match result {
-                        Ok(Ok(item)) => preprocessed_items.push(item),
-                        Ok(Err(e)) => {
-                            tracing::error!("Batcher: Preprocessing failed: {e:#}");
+                        Ok((idx, Ok(item))) => {
+                            results.insert(idx, item);
+                        }
+                        Ok((idx, Err(e))) => {
+                            tracing::error!("Batcher: Preprocessing failed for item {idx}: {e:#}");
+                            failed_indices.push(idx);
                         }
                         Err(e) => {
                             tracing::error!("Batcher: Preprocessing task panicked: {e:#}");
                         }
                     }
                 }
+
+                // Track panicked tasks: spawned count minus completed count
+                let panicked_count = batch_len - results.len() - failed_indices.len();
+                if panicked_count > 0 {
+                    tracing::error!("Batcher: {panicked_count} preprocessing tasks panicked");
+                }
+
+                // Track successful indices for responder filtering
+                let success_indices: Vec<usize> = results.keys().cloned().collect();
+
+                // Build preprocessed items in original order
+                let preprocessed_items: Vec<_> = (0..batch_len)
+                    .filter_map(|idx| results.remove(&idx))
+                    .collect();
+
+                // Filter responders: send errors to failed/panicked ones, keep valid ones
+                let responders: Vec<_> = responders
+                    .into_iter()
+                    .enumerate()
+                    .filter_map(|(idx, resp)| {
+                        if success_indices.contains(&idx) {
+                            Some(resp)
+                        } else {
+                            let _ = resp.send(Err(anyhow::Error::msg("Preprocessing failed")));
+                            None
+                        }
+                    })
+                    .collect();
 
                 if preprocessed_items.is_empty() {
                     tracing::error!("Batcher: All preprocessing tasks failed.");
@@ -131,8 +166,9 @@ impl BatcherTask {
                     }
                 };
 
-                // Send to worker pool
-                let (result_tx, result_rx) = std::sync::mpsc::channel::<Result<Vec<ArrayD<f32>>>>();
+                // Send to worker pool (round-robin dispatch)
+                let (result_tx, result_rx) =
+                    tokio::sync::oneshot::channel::<Result<Vec<ArrayD<f32>>>>();
 
                 let worker_msg = WorkerMessage {
                     batched_tensor,
@@ -141,8 +177,11 @@ impl BatcherTask {
                     result_tx,
                 };
 
-                if let Err(e) = worker_tx.send(worker_msg) {
-                    tracing::error!("Batcher: Failed to send to worker: {e:#}");
+                let worker_idx = dispatch_index % num_workers;
+                dispatch_index = dispatch_index.wrapping_add(1);
+
+                if let Err(e) = worker_txs[worker_idx].send(worker_msg) {
+                    tracing::error!("Batcher: Failed to send to worker {worker_idx}: {e:#}");
                     for responder in responders {
                         let _ = responder.send(Err(anyhow::Error::msg("Worker unavailable")));
                     }
@@ -150,7 +189,7 @@ impl BatcherTask {
                 }
 
                 // Receive sliced outputs from worker
-                let sliced_outputs = match result_rx.recv() {
+                let sliced_outputs = match result_rx.await {
                     Ok(Ok(outputs)) => outputs,
                     Ok(Err(e)) => {
                         tracing::error!("Batcher: Worker inference failed: {e:#}");

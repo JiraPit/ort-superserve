@@ -3,7 +3,7 @@ use crate::session::SessionBuilder;
 use anyhow::Result;
 use ndarray::{ArrayD, IxDyn};
 use ort::session::{Session, SessionInputValue, SessionInputs};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::thread;
 
 /// Task that runs ONNX inference in a dedicated thread.
@@ -17,12 +17,12 @@ impl WorkerTask {
     /// Spawn a worker thread with its own ONNX session.
     ///
     /// The worker will initialize the session, then process batches
-    /// from the channel until shutdown. Failed sessions are retried
+    /// from its dedicated channel until shutdown. Failed sessions are retried
     /// with exponential backoff.
     ///
     /// # Arguments
     ///
-    /// * `worker_rx` - Shared receiver for batch messages.
+    /// * `worker_rx` - Dedicated receiver for this worker's messages.
     /// * `model_path` - Path to the ONNX model file.
     /// * `config` - Server configuration.
     /// * `worker_id` - Unique identifier for logging.
@@ -31,7 +31,7 @@ impl WorkerTask {
     ///
     /// A `JoinHandle` for the spawned thread.
     pub fn spawn(
-        worker_rx: Arc<Mutex<std::sync::mpsc::Receiver<WorkerMessage>>>,
+        mut worker_rx: tokio::sync::mpsc::UnboundedReceiver<WorkerMessage>,
         model_path: Arc<String>,
         config: Arc<ServerConfig>,
         worker_id: usize,
@@ -57,9 +57,9 @@ impl WorkerTask {
 
             // Process batches until channel closes
             loop {
-                let msg = match worker_rx.lock().unwrap().recv() {
-                    Ok(m) => m,
-                    Err(_) => {
+                let msg = match worker_rx.blocking_recv() {
+                    Some(m) => m,
+                    None => {
                         tracing::info!("Worker {}: Channel closed, shutting down.", worker_id);
                         break;
                     }
@@ -184,5 +184,5 @@ pub struct WorkerMessage {
     /// Name of the ONNX output tensor.
     pub output_name: String,
     /// Channel to send sliced outputs back to batcher.
-    pub result_tx: std::sync::mpsc::Sender<Result<Vec<ArrayD<f32>>>>,
+    pub result_tx: tokio::sync::oneshot::Sender<Result<Vec<ArrayD<f32>>>>,
 }

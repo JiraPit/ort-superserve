@@ -187,12 +187,16 @@ impl<I: Input, O: Output> Server<I, O> {
         let model_path = Arc::new(model_path);
 
         let (command_tx, command_rx) = mpsc::unbounded_channel::<Command<I, O>>();
-        let (worker_tx, worker_rx) = std::sync::mpsc::channel::<WorkerMessage>();
-        let worker_rx = Arc::new(std::sync::Mutex::new(worker_rx));
+
+        // Create per-worker channels for lock-free dispatch
+        let mut worker_txs: Vec<tokio::sync::mpsc::UnboundedSender<WorkerMessage>> = Vec::new();
 
         for worker_id in 0..config.num_sessions {
+            let (worker_tx, worker_rx) = tokio::sync::mpsc::unbounded_channel::<WorkerMessage>();
+            worker_txs.push(worker_tx);
+
             WorkerTask::spawn(
-                Arc::clone(&worker_rx),
+                worker_rx,
                 Arc::clone(&model_path),
                 Arc::clone(&config),
                 worker_id,
@@ -201,7 +205,7 @@ impl<I: Input, O: Output> Server<I, O> {
 
         let _batcher_handle = BatcherTask::spawn::<I, O>(
             command_rx,
-            worker_tx,
+            worker_txs,
             Arc::clone(&config),
             input_name,
             output_name,
