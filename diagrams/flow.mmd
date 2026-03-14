@@ -28,7 +28,7 @@ flowchart LR
         end
         
         Batcher -->|"dispatch"| P
-        P -->|"batch()"| S
+        P -->|"batch"| S
         S -->|"slice"| PP
     end
     
