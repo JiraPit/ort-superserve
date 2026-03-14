@@ -107,7 +107,7 @@ let config = ServerConfig::new()
     .with_max_batch_size(16)                           // Maximum batch size
     .with_min_batch_size(1)                            // Minimum batch size
     .with_max_wait_time(Duration::from_millis(10))     // Max wait for batching
-    .with_execution_provider(ExecutionProvider::Cpu);   // CPU execution (default)
+    .with_execution_provider(ExecutionProvider::Cpu);  // CPU execution (default)
 ```
 
 ## Loading Models
