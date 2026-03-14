@@ -92,17 +92,23 @@ impl<I: Input, O: Output> Server<I, O> {
         let session = SessionBuilder::build(&path_str, &config)
             .map_err(|e| anyhow::Error::msg(e.to_string()))?;
 
-        let input_name = session
-            .inputs()
-            .first()
-            .map(|i| i.name().to_string())
-            .context("Model has no inputs")?;
+        let input_name = match config.input_name {
+            Some(ref name) => name.clone(),
+            None => session
+                .inputs()
+                .first()
+                .map(|i| i.name().to_string())
+                .context("Model has no inputs")?,
+        };
 
-        let output_name = session
-            .outputs()
-            .first()
-            .map(|o| o.name().to_string())
-            .context("Model has no outputs")?;
+        let output_name = match config.output_name {
+            Some(ref name) => name.clone(),
+            None => session
+                .outputs()
+                .first()
+                .map(|o| o.name().to_string())
+                .context("Model has no outputs")?,
+        };
 
         drop(session);
 
@@ -156,17 +162,23 @@ impl<I: Input, O: Output> Server<I, O> {
         let session = SessionBuilder::build(&model_path_str, &config)
             .map_err(|e| anyhow::Error::msg(e.to_string()))?;
 
-        let input_name = session
-            .inputs()
-            .first()
-            .map(|i| i.name().to_string())
-            .context("Model has no inputs")?;
+        let input_name = match config.input_name {
+            Some(ref name) => name.clone(),
+            None => session
+                .inputs()
+                .first()
+                .map(|i| i.name().to_string())
+                .context("Model has no inputs")?,
+        };
 
-        let output_name = session
-            .outputs()
-            .first()
-            .map(|o| o.name().to_string())
-            .context("Model has no outputs")?;
+        let output_name = match config.output_name {
+            Some(ref name) => name.clone(),
+            None => session
+                .outputs()
+                .first()
+                .map(|o| o.name().to_string())
+                .context("Model has no outputs")?,
+        };
 
         drop(session);
 

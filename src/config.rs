@@ -178,6 +178,16 @@ pub struct ServerConfig {
     ///
     /// Controls how aggressively ONNX Runtime optimizes the computation graph.
     pub optimization_level: GraphOptimizationLevel,
+
+    /// Optional input tensor name.
+    ///
+    /// If not specified, the first input from the model is used.
+    pub input_name: Option<String>,
+
+    /// Optional output tensor name.
+    ///
+    /// If not specified, the first output from the model is used.
+    pub output_name: Option<String>,
 }
 
 impl Default for ServerConfig {
@@ -190,6 +200,8 @@ impl Default for ServerConfig {
             max_wait_time: Duration::from_millis(10),
             execution_providers: vec![ExecutionProvider::Cpu],
             optimization_level: GraphOptimizationLevel::Level3,
+            input_name: None,
+            output_name: None,
         }
     }
 }
@@ -258,6 +270,22 @@ impl ServerConfig {
     /// Controls how aggressively ONNX Runtime optimizes the computation graph.
     pub fn with_optimization_level(mut self, level: GraphOptimizationLevel) -> Self {
         self.optimization_level = level;
+        self
+    }
+
+    /// Set the input tensor name.
+    ///
+    /// If not specified, the first input from the model is used.
+    pub fn with_input_name(mut self, name: impl Into<String>) -> Self {
+        self.input_name = Some(name.into());
+        self
+    }
+
+    /// Set the output tensor name.
+    ///
+    /// If not specified, the first output from the model is used.
+    pub fn with_output_name(mut self, name: impl Into<String>) -> Self {
+        self.output_name = Some(name.into());
         self
     }
 }
