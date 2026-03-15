@@ -17,3 +17,6 @@ Cargo.lock
 
 # Test artifacts
 *.onnx
+
+# Benchmark data
+benchmarks/data/
