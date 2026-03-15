@@ -2,11 +2,11 @@ use anyhow::Result;
 use ndarray::{Array3, ArrayD, ArrayViewD, Axis};
 use ort_superserve::{ExecutionProvider, Input, Output, Server, ServerConfig};
 
-struct ImageInput {
+struct ArrayInput {
     data: Array3<f32>,
 }
 
-impl Input for ImageInput {
+impl Input for ArrayInput {
     type Preprocessed = Array3<f32>;
 
     async fn preprocess(self) -> Result<Self::Preprocessed> {
@@ -21,12 +21,12 @@ impl Input for ImageInput {
 }
 
 #[derive(Debug)]
-struct DetectionOutput {
+struct ArrayOutput {
     #[allow(dead_code)]
     scores: Vec<f32>,
 }
 
-impl Output for DetectionOutput {
+impl Output for ArrayOutput {
     async fn postprocess(raw: ArrayViewD<'_, f32>) -> Result<Self> {
         let shape = raw.shape();
         let batch_size = shape[0];
@@ -37,7 +37,7 @@ impl Output for DetectionOutput {
             scores.push(slice[[0]]);
         }
 
-        Ok(DetectionOutput { scores })
+        Ok(ArrayOutput { scores })
     }
 }
 
@@ -56,17 +56,17 @@ async fn main() -> Result<()> {
         .nth(1)
         .expect("Usage: cuda_inference <model.onnx>");
 
-    let server = Server::<ImageInput, DetectionOutput>::from_file(&model_path, config).await?;
+    let server = Server::<ArrayInput, ArrayOutput>::from_file(&model_path, config).await?;
 
     println!("Server initialized with CUDA execution provider!");
     println!("Running inference on GPU...");
 
     let input_data = Array3::<f32>::zeros((3, 224, 224));
-    let input = ImageInput { data: input_data };
+    let input = ArrayInput { data: input_data };
 
     let result = server.infer(input).await?;
 
-    println!("Detection output: {:?}", result);
+    println!("Output: {:?}", result);
 
     server.shutdown();
 

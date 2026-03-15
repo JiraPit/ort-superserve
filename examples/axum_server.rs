@@ -1,7 +1,5 @@
 //! Axum HTTP server example showing how to share an ONNX session pool
 //! across all requests using `Arc<Server>`.
-//!
-//! Run with: cargo run --example axum_server -- <model.onnx>
 
 use anyhow::Result;
 use axum::{
@@ -16,16 +14,14 @@ use std::sync::Arc;
 use tokio::signal;
 
 /// Input type for the inference request.
-/// Deserialized from JSON sent by the client.
-struct ImageInput {
+struct ArrayInput {
     data: Array3<f32>,
 }
 
-impl Input for ImageInput {
+impl Input for ArrayInput {
     type Preprocessed = Array3<f32>;
 
     async fn preprocess(self) -> Result<Self::Preprocessed> {
-        // In a real application, you might resize, normalize, etc.
         tokio::task::spawn_blocking(move || Ok(self.data)).await?
     }
 
@@ -37,30 +33,24 @@ impl Input for ImageInput {
 }
 
 /// Output type for the inference response.
-/// Serialized to JSON and sent back to the client.
 #[derive(Debug, Serialize)]
-struct DetectionOutput {
+struct ArrayOutput {
     scores: Vec<f32>,
 }
 
-impl Output for DetectionOutput {
+impl Output for ArrayOutput {
     async fn postprocess(raw: ArrayViewD<'_, f32>) -> Result<Self> {
-        // In a real application, you might apply NMS, thresholding, etc.
         let scores: Vec<f32> = raw.iter().cloned().collect();
-        Ok(DetectionOutput { scores })
+        Ok(ArrayOutput { scores })
     }
 }
 
 /// HTTP request body for inference.
 #[derive(Deserialize)]
 struct InferRequest {
-    /// Flattened image data (H x W x C).
     data: Vec<f32>,
-    /// Image height.
     height: usize,
-    /// Image width.
     width: usize,
-    /// Number of channels.
     channels: usize,
 }
 
@@ -72,14 +62,13 @@ struct InferResponse {
 
 /// Handler for POST /infer endpoint.
 async fn infer_handler(
-    State(server): State<Arc<Server<ImageInput, DetectionOutput>>>,
+    State(server): State<Arc<Server<ArrayInput, ArrayOutput>>>,
     Json(req): Json<InferRequest>,
 ) -> Json<InferResponse> {
-    // Reshape flattened data into Array3
     let data = Array3::from_shape_vec((req.channels, req.height, req.width), req.data)
         .expect("Invalid input shape");
 
-    let input = ImageInput { data };
+    let input = ArrayInput { data };
 
     let output = server.infer(input).await.expect("Inference failed");
 
@@ -110,10 +99,8 @@ async fn main() -> Result<()> {
         .with_min_batch_size(1);
 
     println!("Server initialized with {} sessions", config.num_sessions);
-    println!("Loading model from {}...", model_path);
 
-    let server =
-        Arc::new(Server::<ImageInput, DetectionOutput>::from_file(&model_path, config).await?);
+    let server = Arc::new(Server::<ArrayInput, ArrayOutput>::from_file(&model_path, config).await?);
 
     println!("Listening on http://0.0.0.0:3000");
 
