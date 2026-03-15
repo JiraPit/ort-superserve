@@ -23,6 +23,7 @@ uuid = { version = "1.22.0", features = ["v4"] }
 [dev-dependencies]
 axum = "0.8.8"
 futures = "0.3.32"
+hound = "3.5.1"
 image = "0.25.10"
 serde = { version = "1.0.228", features = ["derive"] }
 tempfile = "3.27.0"
