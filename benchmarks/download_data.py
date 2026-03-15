@@ -2,6 +2,7 @@
 """Download MobileNetV2 model and test data, convert to PNG format."""
 
 import os
+import zlib
 import urllib.request
 import tarfile
 from pathlib import Path
@@ -18,7 +19,6 @@ def download_file(url: str, dest: Path):
 
 def create_sample_images(images_dir: Path, count: int = 100):
     """Create sample PNG images for testing (random noise as placeholder)."""
-    import zlib
     import random
 
     images_dir.mkdir(parents=True, exist_ok=True)
