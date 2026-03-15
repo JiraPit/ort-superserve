@@ -1,7 +1,7 @@
 use anyhow::Result;
 use clap::Parser;
 use csv::Writer;
-use shared::MnistInput;
+use shared::ImageInput;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -101,7 +101,7 @@ async fn main() -> Result<()> {
 
     // Warmup
     for image in all_images.iter().take(args.warmup_requests) {
-        let input = MnistInput::from_png_bytes(image.clone());
+        let input = ImageInput::from_png_bytes(image.clone());
         let client = reqwest::Client::new();
         let _ = client.post(&infer_url).json(&input).send().await?;
     }
@@ -208,7 +208,7 @@ async fn main() -> Result<()> {
                 metrics.active_workers.fetch_add(1, Ordering::Relaxed);
 
                 let image = &images[image_index % images.len()];
-                let input = MnistInput::from_png_bytes(image.clone());
+                let input = ImageInput::from_png_bytes(image.clone());
 
                 let request_start = Instant::now();
                 match client.post(&url).json(&input).send().await {

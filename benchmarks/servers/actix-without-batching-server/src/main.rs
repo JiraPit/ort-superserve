@@ -11,7 +11,7 @@ use ort::{
     session::{Session, SessionInputValue, SessionInputs, builder::GraphOptimizationLevel},
     value::Value,
 };
-use shared::{MnistInput, MnistOutput};
+use shared::{ImageInput, ImageOutput, apply_imagenet_normalization};
 use std::{path::PathBuf, sync::Arc, time::Instant};
 use tower_http::cors::CorsLayer;
 
@@ -120,11 +120,16 @@ async fn main() -> Result<()> {
 /// Handles inference requests by sending to the actor and awaiting response.
 async fn infer_handler(
     State(state): State<Arc<AppState>>,
-    Json(input): Json<MnistInput>,
-) -> Json<MnistOutput> {
+    Json(input): Json<ImageInput>,
+) -> Json<ImageOutput> {
     let start = Instant::now();
 
-    let input_array = input.to_input_array().expect("Failed to process image");
+    let input_array = tokio::task::spawn_blocking(move || {
+        let arr = input.to_input_array().expect("Failed to process image");
+        apply_imagenet_normalization(arr)
+    })
+    .await
+    .expect("Preprocessing task failed");
 
     let logits = state
         .actor
@@ -132,7 +137,7 @@ async fn infer_handler(
         .await
         .expect("Actor send failed");
 
-    let output = MnistOutput::from_logits(&logits);
+    let output = ImageOutput::from_logits(&logits);
 
     let _elapsed = start.elapsed();
 

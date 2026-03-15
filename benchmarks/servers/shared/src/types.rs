@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 /// Input payload containing a base64-encoded PNG image.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MnistInput {
+pub struct ImageInput {
     /// Raw PNG image bytes, serialized as base64 in JSON.
     #[serde(with = "base64")]
     pub image_bytes: Vec<u8>,
@@ -37,14 +37,14 @@ mod base64 {
 
 /// Output payload containing predicted class and confidence score.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MnistOutput {
+pub struct ImageOutput {
     /// Predicted class index (0-999 for ImageNet).
     pub digit: usize,
     /// Confidence score derived from softmax probabilities.
     pub confidence: f32,
 }
 
-impl MnistInput {
+impl ImageInput {
     /// Creates an input from raw PNG bytes.
     pub fn from_png_bytes(bytes: Vec<u8>) -> Self {
         Self { image_bytes: bytes }
@@ -71,12 +71,11 @@ impl MnistInput {
     ///
     /// Returns a tensor with shape [3, 224, 224] normalized to [0, 1].
     /// When batched, this becomes [batch, 3, 224, 224].
+    /// Note: ImageNet normalization (mean/std) should be applied by the server.
     pub fn to_input_array(&self) -> Result<ArrayD<f32>> {
         let rgb = self.decode()?;
         let (width, height) = rgb.dimensions();
 
-        // ResNet50 expects NCHW format: [C, H, W]
-        // Channel-first layout: RRR...GGG...BBB
         let mut data = Vec::with_capacity((width * height * 3) as usize);
 
         for channel in 0..3 {
@@ -94,12 +93,37 @@ impl MnistInput {
     }
 }
 
-impl MnistOutput {
+/// Applies ImageNet normalization to a tensor in [C, H, W] format.
+/// Mean: [0.485, 0.456, 0.406], Std: [0.229, 0.224, 0.225]
+pub fn apply_imagenet_normalization(tensor: ArrayD<f32>) -> ArrayD<f32> {
+    let mean = [0.485f32, 0.456, 0.406];
+    let std = [0.229, 0.224, 0.225];
+
+    let mut result = tensor.into_owned();
+    for c in 0..3 {
+        for i in 0..224 {
+            for j in 0..224 {
+                let val = result[[c, i, j]];
+                result[[c, i, j]] = (val - mean[c]) / std[c];
+            }
+        }
+    }
+    result
+}
+
+impl ImageOutput {
     /// Converts raw logits to prediction output using softmax.
     ///
     /// Computes the softmax probability of the maximum logit
     /// as the confidence score.
     pub fn from_logits(logits: &[f32]) -> Self {
+        if logits.is_empty() {
+            return Self {
+                digit: 0,
+                confidence: 0.0,
+            };
+        }
+
         let max_idx = logits
             .iter()
             .enumerate()
@@ -119,6 +143,13 @@ impl MnistOutput {
 
     /// Creates output from pre-computed softmax probabilities.
     pub fn from_softmax_probs(probs: &[f32]) -> Self {
+        if probs.is_empty() {
+            return Self {
+                digit: 0,
+                confidence: 0.0,
+            };
+        }
+
         let max_idx = probs
             .iter()
             .enumerate()

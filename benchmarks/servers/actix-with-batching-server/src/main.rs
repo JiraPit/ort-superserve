@@ -15,7 +15,7 @@ use ort::{
     session::{Session, SessionInputValue, SessionInputs, builder::GraphOptimizationLevel},
     value::Value,
 };
-use shared::{MnistInput, MnistOutput};
+use shared::{ImageInput, ImageOutput, apply_imagenet_normalization};
 use std::{path::PathBuf, sync::Arc, time::Instant};
 use tokio::sync::oneshot;
 use tokio::time::Duration;
@@ -258,11 +258,16 @@ async fn main() -> Result<()> {
 /// Handles inference requests by preprocessing and sending to the batcher.
 async fn infer_handler(
     State(state): State<Arc<AppState>>,
-    Json(input): Json<MnistInput>,
-) -> Json<MnistOutput> {
+    Json(input): Json<ImageInput>,
+) -> Json<ImageOutput> {
     let start = Instant::now();
 
-    let input_array = input.to_input_array().expect("Failed to process image");
+    let input_array = tokio::task::spawn_blocking(move || {
+        let arr = input.to_input_array().expect("Failed to process image");
+        apply_imagenet_normalization(arr)
+    })
+    .await
+    .expect("Preprocessing task failed");
 
     let logits = state
         .batcher
@@ -272,7 +277,7 @@ async fn infer_handler(
         .expect("Inference failed");
 
     let logits_f32: Vec<f32> = logits.iter().map(|&x| x as f32).collect();
-    let output = MnistOutput::from_logits(&logits_f32);
+    let output = ImageOutput::from_logits(&logits_f32);
 
     let _elapsed = start.elapsed();
 

@@ -1,7 +1,7 @@
-//! Shared types and utilities for MNIST benchmark servers.
+//! Shared types and utilities for image classification benchmark servers.
 
-mod mnist;
+mod image;
 mod types;
 
-pub use mnist::*;
+pub use image::*;
 pub use types::*;

@@ -13,7 +13,7 @@ use ort::{
     session::{Session, SessionInputValue, SessionInputs, builder::GraphOptimizationLevel},
     value::Value,
 };
-use shared::{MnistInput, MnistOutput};
+use shared::{ImageInput, ImageOutput, apply_imagenet_normalization};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Mutex;
@@ -166,17 +166,22 @@ async fn main() -> Result<()> {
 /// Handles inference requests by preprocessing and calling the batched function.
 async fn infer_handler(
     State(batch_predict): State<AppState>,
-    Json(input): Json<MnistInput>,
-) -> Json<MnistOutput> {
+    Json(input): Json<ImageInput>,
+) -> Json<ImageOutput> {
     let start = TokioInstant::now();
 
-    let input_array = input.to_input_array().expect("Failed to preprocess image");
+    let input_array = tokio::task::spawn_blocking(move || {
+        let arr = input.to_input_array().expect("Failed to preprocess image");
+        apply_imagenet_normalization(arr)
+    })
+    .await
+    .expect("Preprocessing task failed");
 
     let logits = batch_predict(input_array)
         .await
         .expect("Batched inference failed");
 
-    let output = MnistOutput::from_logits(&logits);
+    let output = ImageOutput::from_logits(&logits);
 
     let _elapsed = start.elapsed();
 

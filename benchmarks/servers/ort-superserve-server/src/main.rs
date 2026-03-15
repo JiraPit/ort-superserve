@@ -12,7 +12,7 @@ use axum::{Json, Router, extract::State, routing::post};
 use ndarray::{ArrayD, ArrayViewD};
 use ort::session::builder::GraphOptimizationLevel;
 use ort_superserve::{Input, Output, Server, ServerConfig, helpers::batch_array};
-use shared::{MnistInput, MnistOutput};
+use shared::{ImageInput, ImageOutput, apply_imagenet_normalization};
 use tower_http::cors::CorsLayer;
 
 /// Input wrapper implementing the ort-superserve `Input` trait.
@@ -26,8 +26,11 @@ impl Input for MyInput {
 
     /// Preprocesses the PNG bytes into a normalized tensor.
     async fn preprocess(self) -> Result<Self::Preprocessed> {
-        let input = MnistInput::from_png_bytes(self.image_bytes);
-        input.to_input_array()
+        let input = ImageInput::from_png_bytes(self.image_bytes);
+        let tensor = input.to_input_array()?;
+        let tensor =
+            tokio::task::spawn_blocking(move || apply_imagenet_normalization(tensor)).await?;
+        Ok(tensor)
     }
 
     /// Stacks multiple preprocessed inputs into a batched tensor.
@@ -48,7 +51,7 @@ impl Output for MyOutput {
     /// Postprocesses raw logits into predicted digit and confidence.
     async fn postprocess(raw: ArrayViewD<'_, f32>) -> Result<Self> {
         let logits: Vec<f32> = raw.iter().copied().collect();
-        let output = MnistOutput::from_logits(&logits);
+        let output = ImageOutput::from_logits(&logits);
         Ok(MyOutput {
             digit: output.digit,
             confidence: output.confidence,
@@ -99,8 +102,8 @@ async fn main() -> Result<()> {
 /// Handles inference requests by delegating to the ort-superserve server.
 async fn infer_handler(
     State(state): State<Arc<AppState>>,
-    Json(input): Json<MnistInput>,
-) -> Json<MnistOutput> {
+    Json(input): Json<ImageInput>,
+) -> Json<ImageOutput> {
     let start = Instant::now();
 
     let my_input = MyInput {
@@ -115,7 +118,7 @@ async fn infer_handler(
 
     let _elapsed = start.elapsed();
 
-    Json(MnistOutput {
+    Json(ImageOutput {
         digit: output.digit,
         confidence: output.confidence,
     })
