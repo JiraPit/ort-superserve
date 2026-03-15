@@ -65,7 +65,8 @@ impl MnistInput {
 
     /// Converts the image into an ONNX-compatible input tensor.
     ///
-    /// Returns a tensor with shape [1, 1, height, width] normalized to [0, 1].
+    /// Returns a tensor with shape [1, height, width] normalized to [0, 1].
+    /// When batched, this becomes [batch, 1, height, width].
     pub fn to_input_array(&self) -> Result<ArrayD<f32>> {
         let gray = self.decode()?;
         let (width, height) = gray.dimensions();
@@ -76,7 +77,7 @@ impl MnistInput {
         }
 
         let arr = Array1::from_vec(data);
-        let arr = arr.into_shape_with_order(IxDyn(&[1, 1, height as usize, width as usize]))?;
+        let arr = arr.into_shape_with_order(IxDyn(&[1, height as usize, width as usize]))?;
         Ok(arr)
     }
 }

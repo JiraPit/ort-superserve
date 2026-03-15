@@ -7,7 +7,7 @@ edition = "2024"
 anyhow = "1.0.102"
 axum = "0.8.8"
 ndarray = "0.17.2"
-ort = { version = "2.0.0-rc.12", features = ["load-dynamic"] }
+ort = { version = "2.0.0-rc.12" }
 ort-superserve = { version = "0.2.0", path = "../../.." }
 shared = { version = "0.1.0", path = "../shared" }
 tokio = { version = "1.50.0", features = ["full"] }
