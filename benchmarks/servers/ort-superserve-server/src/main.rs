@@ -8,10 +8,10 @@ use std::{path::PathBuf, sync::Arc, time::Instant};
 use tokio::time::Duration;
 
 use anyhow::Result;
-use axum::{extract::State, routing::post, Json, Router};
+use axum::{Json, Router, extract::State, routing::post};
 use ndarray::{ArrayD, ArrayViewD};
 use ort::session::builder::GraphOptimizationLevel;
-use ort_superserve::{helpers::batch_array, Input, Output, Server, ServerConfig};
+use ort_superserve::{Input, Output, Server, ServerConfig, helpers::batch_array};
 use shared::{MnistInput, MnistOutput};
 use tower_http::cors::CorsLayer;
 
@@ -107,10 +107,13 @@ async fn infer_handler(
         image_bytes: input.image_bytes,
     };
 
-    let output = state.server.infer(my_input).await.expect("Inference failed");
+    let output = state
+        .server
+        .infer(my_input)
+        .await
+        .expect("Inference failed");
 
-    let elapsed = start.elapsed();
-    println!("Request completed in {:?}", elapsed);
+    let _elapsed = start.elapsed();
 
     Json(MnistOutput {
         digit: output.digit,

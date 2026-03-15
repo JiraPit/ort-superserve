@@ -6,9 +6,9 @@
 
 use actix::{Actor, Addr, Handler, Message, SyncArbiter, SyncContext};
 use anyhow::Result;
-use axum::{extract::State, routing::post, Json, Router};
+use axum::{Json, Router, extract::State, routing::post};
 use ort::{
-    session::{builder::GraphOptimizationLevel, Session, SessionInputValue, SessionInputs},
+    session::{Session, SessionInputValue, SessionInputs, builder::GraphOptimizationLevel},
     value::Value,
 };
 use shared::{MnistInput, MnistOutput};
@@ -53,8 +53,18 @@ impl Handler<InferMessage> for InferenceActor {
 
     /// Runs inference on the input tensor and returns logits.
     fn handle(&mut self, msg: InferMessage, _ctx: &mut Self::Context) -> Self::Result {
-        let input_value =
-            Value::from_array(msg.input_array.clone()).expect("Failed to create input tensor");
+        let shape = msg.input_array.shape();
+        let batched = if shape.len() == 3 {
+            ndarray::ArrayD::from_shape_vec(
+                ndarray::IxDyn(&[1, shape[0], shape[1], shape[2]]),
+                msg.input_array.clone().into_raw_vec_and_offset().0,
+            )
+            .expect("Failed to add batch dimension")
+        } else {
+            msg.input_array.clone()
+        };
+
+        let input_value = Value::from_array(batched).expect("Failed to create input tensor");
 
         let inputs: SessionInputs = SessionInputs::ValueMap(vec![(
             std::borrow::Cow::Borrowed("input"),
@@ -77,7 +87,7 @@ struct AppState {
     actor: Addr<InferenceActor>,
 }
 
-#[tokio::main]
+#[actix::main]
 async fn main() -> Result<()> {
     let model_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -124,8 +134,7 @@ async fn infer_handler(
 
     let output = MnistOutput::from_logits(&logits);
 
-    let elapsed = start.elapsed();
-    println!("Request completed in {:?}", elapsed);
+    let _elapsed = start.elapsed();
 
     Json(output)
 }

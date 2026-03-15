@@ -5,12 +5,12 @@
 //! boilerplate compared to manual implementation.
 
 use anyhow::Result;
-use axum::{extract::State, routing::post, Json, Router};
+use axum::{Json, Router, extract::State, routing::post};
 use batched_fn::batched_fn;
 use ndarray::ArrayD;
 use once_cell::sync::Lazy;
 use ort::{
-    session::{builder::GraphOptimizationLevel, Session, SessionInputValue, SessionInputs},
+    session::{Session, SessionInputValue, SessionInputs, builder::GraphOptimizationLevel},
     value::Value,
 };
 use shared::{MnistInput, MnistOutput};
@@ -116,7 +116,10 @@ fn predict_batch(batch: Batch<PreprocessedInput>) -> Batch<InferenceResult> {
 
 /// Type alias for the batched prediction function.
 type BatchPredictFn = Arc<
-    dyn Fn(PreprocessedInput) -> Pin<Box<dyn Future<Output = Result<InferenceResult, batched_fn::Error>> + Send>>
+    dyn Fn(
+            PreprocessedInput,
+        )
+            -> Pin<Box<dyn Future<Output = Result<InferenceResult, batched_fn::Error>> + Send>>
         + Send
         + Sync,
 >;
@@ -169,12 +172,13 @@ async fn infer_handler(
 
     let input_array = input.to_input_array().expect("Failed to preprocess image");
 
-    let logits = batch_predict(input_array).await.expect("Batched inference failed");
+    let logits = batch_predict(input_array)
+        .await
+        .expect("Batched inference failed");
 
     let output = MnistOutput::from_logits(&logits);
 
-    let elapsed = start.elapsed();
-    println!("Request completed in {:?}", elapsed);
+    let _elapsed = start.elapsed();
 
     Json(output)
 }

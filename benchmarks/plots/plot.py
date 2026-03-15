@@ -48,7 +48,7 @@ def main():
         try:
             df = pd.read_csv(csv_file)
             data[server_name] = df
-            print(f"Loaded {server_name}: {len(df)} records")
+            print(f"Loaded {server_name}: {len(df)} samples")
         except Exception as e:
             print(f"Error loading {csv_file}: {e}")
 
@@ -66,71 +66,139 @@ def main():
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    # Plot 1: Latency vs Concurrency
     fig, ax = plt.subplots(figsize=(12, 8))
 
     for server_name, df in sorted(data.items()):
-        color = colors.get(server_name, "gray")
-        if "latency_p50_ms" in df.columns:
-            ax.bar(
-                server_name,
-                df["latency_p50_ms"].iloc[0],
+        if "concurrency" in df.columns and "latency_p50_ms" in df.columns:
+            agg = (
+                df.groupby("concurrency")
+                .agg(
+                    {
+                        "latency_p50_ms": "mean",
+                        "latency_p90_ms": "mean",
+                        "latency_p99_ms": "mean",
+                        "throughput_rps": "mean",
+                    }
+                )
+                .reset_index()
+            )
+            color = colors.get(server_name, "gray")
+            ax.plot(
+                agg["concurrency"],
+                agg["latency_p50_ms"],
                 label=server_name,
                 color=color,
-                alpha=0.7,
+                linewidth=2,
+                marker="o",
+                markersize=3,
             )
 
-    ax.set_xlabel("Server")
+    ax.set_xlabel("Concurrency")
     ax.set_ylabel("Latency p50 (ms)")
-    ax.set_title("Latency Comparison (p50)")
+    ax.set_title("Latency vs Concurrency")
     ax.legend()
     ax.grid(True, alpha=0.3)
+    ax.set_xscale("log")
 
     plt.tight_layout()
-    latency_path = output_dir / "latency_comparison.png"
+    latency_path = output_dir / "latency_vs_concurrency.png"
     plt.savefig(latency_path, dpi=150)
     print(f"Saved: {latency_path}")
 
+    # Plot 2: Throughput vs Concurrency
     fig, ax = plt.subplots(figsize=(12, 8))
 
     for server_name, df in sorted(data.items()):
-        color = colors.get(server_name, "gray")
-        if "throughput_rps" in df.columns:
-            ax.bar(
-                server_name,
-                df["throughput_rps"].iloc[0],
+        if "concurrency" in df.columns and "throughput_rps" in df.columns:
+            agg = (
+                df.groupby("concurrency")
+                .agg(
+                    {
+                        "throughput_rps": "mean",
+                    }
+                )
+                .reset_index()
+            )
+            color = colors.get(server_name, "gray")
+            ax.plot(
+                agg["concurrency"],
+                agg["throughput_rps"],
                 label=server_name,
                 color=color,
-                alpha=0.7,
+                linewidth=2,
+                marker="o",
+                markersize=3,
             )
 
-    ax.set_xlabel("Server")
+    ax.set_xlabel("Concurrency")
     ax.set_ylabel("Throughput (req/s)")
-    ax.set_title("Throughput Comparison")
+    ax.set_title("Throughput vs Concurrency")
     ax.legend()
     ax.grid(True, alpha=0.3)
+    ax.set_xscale("log")
 
     plt.tight_layout()
-    throughput_path = output_dir / "throughput_comparison.png"
+    throughput_path = output_dir / "throughput_vs_concurrency.png"
     plt.savefig(throughput_path, dpi=150)
     print(f"Saved: {throughput_path}")
 
-    print("\n" + "=" * 80)
-    print("BENCHMARK SUMMARY")
-    print("=" * 80)
-    print(
-        f"{'Server':<25} {'Throughput (req/s)':<20} {'Latency p50 (ms)':<20} {'Latency p99 (ms)':<20}"
-    )
-    print("-" * 80)
+    # Plot 3: P99 Latency vs Concurrency
+    fig, ax = plt.subplots(figsize=(12, 8))
 
     for server_name, df in sorted(data.items()):
-        throughput = (
-            df["throughput_rps"].iloc[0] if "throughput_rps" in df.columns else 0
-        )
-        p50 = df["latency_p50_ms"].iloc[0] if "latency_p50_ms" in df.columns else 0
-        p99 = df["latency_p99_ms"].iloc[0] if "latency_p99_ms" in df.columns else 0
-        print(f"{server_name:<25} {throughput:<20.2f} {p50:<20.2f} {p99:<20.2f}")
+        if "concurrency" in df.columns and "latency_p99_ms" in df.columns:
+            agg = (
+                df.groupby("concurrency")
+                .agg(
+                    {
+                        "latency_p99_ms": "mean",
+                    }
+                )
+                .reset_index()
+            )
+            color = colors.get(server_name, "gray")
+            ax.plot(
+                agg["concurrency"],
+                agg["latency_p99_ms"],
+                label=server_name,
+                color=color,
+                linewidth=2,
+                marker="o",
+                markersize=3,
+            )
 
-    print("=" * 80)
+    ax.set_xlabel("Concurrency")
+    ax.set_ylabel("Latency p99 (ms)")
+    ax.set_title("P99 Latency vs Concurrency")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    ax.set_xscale("log")
+
+    plt.tight_layout()
+    p99_path = output_dir / "p99_latency_vs_concurrency.png"
+    plt.savefig(p99_path, dpi=150)
+    print(f"Saved: {p99_path}")
+
+    # Summary
+    print("\n" + "=" * 100)
+    print("BENCHMARK SUMMARY")
+    print("=" * 100)
+    print(
+        f"{'Server':<25} {'Max Throughput':<20} {'Min P50 (ms)':<20} {'Min P99 (ms)':<20}"
+    )
+    print("-" * 100)
+
+    for server_name, df in sorted(data.items()):
+        if "throughput_rps" in df.columns and "latency_p50_ms" in df.columns:
+            max_throughput = df.groupby("concurrency")["throughput_rps"].mean().max()
+            min_p50 = df.groupby("concurrency")["latency_p50_ms"].mean().min()
+            min_p99 = df.groupby("concurrency")["latency_p99_ms"].mean().min()
+            print(
+                f"{server_name:<25} {max_throughput:<20.2f} {min_p50:<20.2f} {min_p99:<20.2f}"
+            )
+
+    print("=" * 100)
     print(f"\nPlots saved to {output_dir}")
 
 

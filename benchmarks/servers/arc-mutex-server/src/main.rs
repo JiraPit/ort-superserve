@@ -3,11 +3,10 @@
 //! This implementation represents the simplest but least scalable approach
 //! to ONNX session management. A single session is wrapped in a mutex,
 /// creating contention under concurrent load.
-
 use anyhow::Result;
-use axum::{extract::State, routing::post, Json, Router};
+use axum::{Json, Router, extract::State, routing::post};
 use ort::{
-    session::{builder::GraphOptimizationLevel, Session, SessionInputValue, SessionInputs},
+    session::{Session, SessionInputValue, SessionInputs, builder::GraphOptimizationLevel},
     value::Value,
 };
 use shared::{MnistInput, MnistOutput};
@@ -69,11 +68,21 @@ async fn infer_handler(
 
     let input_array = input.to_input_array().expect("Failed to process image");
 
+    let shape = input_array.shape();
+    let batched = if shape.len() == 3 {
+        ndarray::ArrayD::from_shape_vec(
+            ndarray::IxDyn(&[1, shape[0], shape[1], shape[2]]),
+            input_array.clone().into_raw_vec_and_offset().0,
+        )
+        .expect("Failed to add batch dimension")
+    } else {
+        input_array.clone()
+    };
+
     let logits = {
         let mut session = state.session.lock().await;
 
-        let input_value =
-            Value::from_array(input_array.clone()).expect("Failed to create input tensor");
+        let input_value = Value::from_array(batched).expect("Failed to create input tensor");
 
         let inputs: SessionInputs = SessionInputs::ValueMap(vec![(
             std::borrow::Cow::Borrowed("input"),
@@ -92,8 +101,7 @@ async fn infer_handler(
 
     let output = MnistOutput::from_logits(&logits);
 
-    let elapsed = start.elapsed();
-    println!("Request completed in {:?}", elapsed);
+    let _elapsed = start.elapsed();
 
     Json(output)
 }

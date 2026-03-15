@@ -9,10 +9,10 @@
 
 use actix::{Actor, Addr, AsyncContext, Handler, Message, SyncArbiter, SyncContext};
 use anyhow::Result;
-use axum::{extract::State, routing::post, Json, Router};
+use axum::{Json, Router, extract::State, routing::post};
 use ndarray::ArrayD;
 use ort::{
-    session::{builder::GraphOptimizationLevel, Session, SessionInputValue, SessionInputs},
+    session::{Session, SessionInputValue, SessionInputs, builder::GraphOptimizationLevel},
     value::Value,
 };
 use shared::{MnistInput, MnistOutput};
@@ -189,7 +189,9 @@ impl Handler<InferMessage> for BatcherActor {
             });
         }
 
-        actix::Response::fut(async move { rx.await.map_err(|_| anyhow::Error::msg("Channel closed")) })
+        actix::Response::fut(
+            async move { rx.await.map_err(|_| anyhow::Error::msg("Channel closed")) },
+        )
     }
 }
 
@@ -215,7 +217,7 @@ struct AppState {
     batcher: Addr<BatcherActor>,
 }
 
-#[tokio::main]
+#[actix::main]
 async fn main() -> Result<()> {
     let model_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -272,8 +274,7 @@ async fn infer_handler(
     let logits_f32: Vec<f32> = logits.iter().map(|&x| x as f32).collect();
     let output = MnistOutput::from_logits(&logits_f32);
 
-    let elapsed = start.elapsed();
-    println!("Request completed in {:?}", elapsed);
+    let _elapsed = start.elapsed();
 
     Json(output)
 }
