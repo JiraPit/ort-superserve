@@ -2,7 +2,6 @@ use anyhow::Result;
 use clap::Parser;
 use csv::Writer;
 use shared::ImageInput;
-use shared::ImageOutput;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -214,14 +213,6 @@ async fn main() -> Result<()> {
                 let request_start = Instant::now();
                 match client.post(&url).json(&input).send().await {
                     Ok(resp) if resp.status().is_success() => {
-                        match resp.json::<ImageOutput>().await {
-                            Ok(output) => {
-                                println!("class_id: {}, confidence: {:.4}", output.class_id, output.confidence);
-                            }
-                            Err(e) => {
-                                eprintln!("Failed to parse response: {}", e);
-                            }
-                        }
                         let latency = request_start.elapsed().as_micros() as u64;
                         let ts = start_time.elapsed().as_secs_f64();
                         metrics.latency_us.fetch_add(latency, Ordering::Relaxed);
