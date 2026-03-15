@@ -29,6 +29,8 @@ const MAX_WAIT_MS: u64 = 10;
 /// Worker actor that owns the ONNX session and processes batched inference.
 struct WorkerActor {
     session: Session,
+    input_name: String,
+    output_name: String,
 }
 
 impl Actor for WorkerActor {
@@ -46,7 +48,11 @@ impl WorkerActor {
             .map_err(|e| anyhow::Error::msg(e.to_string()))?
             .commit_from_file(model_path)
             .map_err(|e| anyhow::Error::msg(e.to_string()))?;
-        Ok(Self { session })
+        
+        let input_name = session.inputs().first().map(|i| i.name().to_string()).expect("Model has no inputs");
+        let output_name = session.outputs().first().map(|o| o.name().to_string()).expect("Model has no outputs");
+        
+        Ok(Self { session, input_name, output_name })
     }
 }
 
@@ -94,7 +100,7 @@ impl Handler<BatchInferMessage> for WorkerActor {
         };
 
         let inputs: SessionInputs = SessionInputs::ValueMap(vec![(
-            std::borrow::Cow::Borrowed("input"),
+            std::borrow::Cow::Borrowed(&self.input_name),
             SessionInputValue::Owned(input_value.into()),
         )]);
 
@@ -108,7 +114,7 @@ impl Handler<BatchInferMessage> for WorkerActor {
             }
         };
 
-        let output_tensor = match outputs.get("output") {
+        let output_tensor = match outputs.get(&self.output_name) {
             Some(t) => t,
             None => {
                 for tx in msg.result_txs {

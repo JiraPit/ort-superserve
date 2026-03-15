@@ -17,6 +17,8 @@ use tower_http::cors::CorsLayer;
 /// Application state containing the mutex-protected ONNX session.
 struct AppState {
     session: Arc<Mutex<Session>>,
+    input_name: String,
+    output_name: String,
 }
 
 #[tokio::main]
@@ -37,8 +39,13 @@ async fn main() -> Result<()> {
         .commit_from_file(&model_path)
         .map_err(|e| anyhow::Error::msg(e.to_string()))?;
 
+    let input_name = session.inputs().first().map(|i| i.name().to_string()).expect("Model has no inputs");
+    let output_name = session.outputs().first().map(|o| o.name().to_string()).expect("Model has no outputs");
+
     let state = Arc::new(AppState {
         session: Arc::new(Mutex::new(session)),
+        input_name,
+        output_name,
     });
 
     let app = Router::new()
@@ -90,13 +97,13 @@ async fn infer_handler(
         let input_value = Value::from_array(batched).expect("Failed to create input tensor");
 
         let inputs: SessionInputs = SessionInputs::ValueMap(vec![(
-            std::borrow::Cow::Borrowed("input"),
+            std::borrow::Cow::Borrowed(&state.input_name),
             SessionInputValue::Owned(input_value.into()),
         )]);
 
         let outputs = session.run(inputs).expect("Inference failed");
 
-        let output_tensor = outputs.get("output").expect("Output not found");
+        let output_tensor = outputs.get(&state.output_name).expect("Output not found");
         let (_shape, data) = output_tensor
             .try_extract_tensor::<f32>()
             .expect("Failed to extract tensor");

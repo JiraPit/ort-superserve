@@ -18,6 +18,8 @@ use tower_http::cors::CorsLayer;
 /// Actor that owns the ONNX session and processes inference requests.
 struct InferenceActor {
     session: Session,
+    input_name: String,
+    output_name: String,
 }
 
 impl Actor for InferenceActor {
@@ -35,7 +37,11 @@ impl InferenceActor {
             .map_err(|e| anyhow::Error::msg(e.to_string()))?
             .commit_from_file(model_path)
             .map_err(|e| anyhow::Error::msg(e.to_string()))?;
-        Ok(Self { session })
+        
+        let input_name = session.inputs().first().map(|i| i.name().to_string()).expect("Model has no inputs");
+        let output_name = session.outputs().first().map(|o| o.name().to_string()).expect("Model has no outputs");
+        
+        Ok(Self { session, input_name, output_name })
     }
 }
 
@@ -67,13 +73,13 @@ impl Handler<InferMessage> for InferenceActor {
         let input_value = Value::from_array(batched).expect("Failed to create input tensor");
 
         let inputs: SessionInputs = SessionInputs::ValueMap(vec![(
-            std::borrow::Cow::Borrowed("input"),
+            std::borrow::Cow::Borrowed(&self.input_name),
             SessionInputValue::Owned(input_value.into()),
         )]);
 
         let outputs = self.session.run(inputs).expect("Inference failed");
 
-        let output_tensor = outputs.get("output").expect("Output not found");
+        let output_tensor = outputs.get(&self.output_name).expect("Output not found");
         let (_shape, data) = output_tensor
             .try_extract_tensor::<f32>()
             .expect("Failed to extract tensor");

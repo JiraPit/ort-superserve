@@ -42,6 +42,18 @@ static SESSION: Lazy<Mutex<Session>> = Lazy::new(|| {
     Mutex::new(session)
 });
 
+/// Global input tensor name.
+static INPUT_NAME: Lazy<String> = Lazy::new(|| {
+    let session = SESSION.lock().unwrap();
+    session.inputs().first().map(|i| i.name().to_string()).expect("Model has no inputs")
+});
+
+/// Global output tensor name.
+static OUTPUT_NAME: Lazy<String> = Lazy::new(|| {
+    let session = SESSION.lock().unwrap();
+    session.outputs().first().map(|o| o.name().to_string()).expect("Model has no outputs")
+});
+
 /// Type alias for a batch of items.
 type Batch<T> = Vec<T>;
 /// Preprocessed input tensor type.
@@ -74,7 +86,7 @@ fn predict_batch(batch: Batch<PreprocessedInput>) -> Batch<InferenceResult> {
     };
 
     let inputs: SessionInputs = SessionInputs::ValueMap(vec![(
-        std::borrow::Cow::Borrowed("input"),
+        std::borrow::Cow::Borrowed(&*INPUT_NAME),
         SessionInputValue::Owned(input_value.into()),
     )]);
 
@@ -87,7 +99,7 @@ fn predict_batch(batch: Batch<PreprocessedInput>) -> Batch<InferenceResult> {
             }
         };
 
-        let output_tensor = match outputs.get("output") {
+        let output_tensor = match outputs.get(&*OUTPUT_NAME) {
             Some(t) => t,
             None => {
                 return vec![vec![0.0; 1000]; batch.len()];
