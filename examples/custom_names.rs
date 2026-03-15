@@ -23,21 +23,14 @@ impl Input for ArrayInput {
 #[derive(Debug)]
 struct ArrayOutput {
     #[allow(dead_code)]
-    scores: Vec<f32>,
+    values: Vec<f32>,
 }
 
 impl Output for ArrayOutput {
     async fn postprocess(raw: ArrayViewD<'_, f32>) -> Result<Self> {
-        let shape = raw.shape();
-        let batch_size = shape[0];
-
-        let mut scores = Vec::new();
-        for i in 0..batch_size {
-            let slice = raw.index_axis(Axis(0), i);
-            scores.push(slice[[0]]);
-        }
-
-        Ok(ArrayOutput { scores })
+        Ok(ArrayOutput {
+            values: raw.iter().cloned().collect(),
+        })
     }
 }
 
