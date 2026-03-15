@@ -1,0 +1,23 @@
+# Benchmark data (regenerate with: python3 download_data.py)
+data/mnist-12.onnx
+data/images/
+data/*.gz
+
+# Build artifacts
+target/
+Cargo.lock
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Benchmark results
+results/*.csv
+results/*.png

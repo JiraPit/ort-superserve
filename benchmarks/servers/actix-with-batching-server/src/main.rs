@@ -1,0 +1,252 @@
+use actix::{Actor, Addr, AsyncContext, Handler, Message, SyncArbiter, SyncContext};
+use anyhow::Result;
+use axum::{Json, Router, extract::State, routing::post};
+use ndarray::ArrayD;
+use ort::{
+    session::{Session, SessionInputValue, SessionInputs, builder::GraphOptimizationLevel},
+    value::Value,
+};
+use shared::{MnistInput, MnistOutput};
+use std::{path::PathBuf, sync::Arc, time::Instant};
+use tokio::sync::oneshot;
+use tokio::time::Duration;
+use tower_http::cors::CorsLayer;
+
+const MAX_BATCH_SIZE: usize = 32;
+const MAX_WAIT_MS: u64 = 10;
+
+struct WorkerActor {
+    session: Session,
+}
+
+impl Actor for WorkerActor {
+    type Context = SyncContext<Self>;
+}
+
+impl WorkerActor {
+    fn new(model_path: &PathBuf) -> Result<Self> {
+        let session = Session::builder()
+            .map_err(|e| anyhow::Error::msg(e.to_string()))?
+            .with_optimization_level(GraphOptimizationLevel::Level3)
+            .map_err(|e| anyhow::Error::msg(e.to_string()))?
+            .with_intra_threads(4)
+            .map_err(|e| anyhow::Error::msg(e.to_string()))?
+            .commit_from_file(model_path)
+            .map_err(|e| anyhow::Error::msg(e.to_string()))?;
+        Ok(Self { session })
+    }
+}
+
+struct BatchInferMessage {
+    batch: Vec<ArrayD<f32>>,
+    result_txs: Vec<oneshot::Sender<Vec<f64>>>,
+}
+
+impl Message for BatchInferMessage {
+    type Result = ();
+}
+
+impl Handler<BatchInferMessage> for WorkerActor {
+    type Result = ();
+
+    fn handle(&mut self, msg: BatchInferMessage, _ctx: &mut Self::Context) {
+        let batch_size = msg.batch.len();
+        if batch_size == 0 {
+            return;
+        }
+
+        let views: Vec<_> = msg.batch.iter().map(|a| a.view()).collect();
+        let batched = match ndarray::stack(ndarray::Axis(0), &views) {
+            Ok(b) => b.into_dyn(),
+            Err(_) => {
+                for tx in msg.result_txs {
+                    let _ = tx.send(Vec::new());
+                }
+                return;
+            }
+        };
+
+        let input_value = match Value::from_array(batched) {
+            Ok(v) => v,
+            Err(_) => {
+                for tx in msg.result_txs {
+                    let _ = tx.send(Vec::new());
+                }
+                return;
+            }
+        };
+
+        let inputs: SessionInputs = SessionInputs::ValueMap(vec![(
+            std::borrow::Cow::Borrowed("Input3"),
+            SessionInputValue::Owned(input_value.into()),
+        )]);
+
+        let outputs = match self.session.run(inputs) {
+            Ok(o) => o,
+            Err(_) => {
+                for tx in msg.result_txs {
+                    let _ = tx.send(Vec::new());
+                }
+                return;
+            }
+        };
+
+        let output_tensor = match outputs.get("Plus214_Output_0") {
+            Some(t) => t,
+            None => {
+                for tx in msg.result_txs {
+                    let _ = tx.send(Vec::new());
+                }
+                return;
+            }
+        };
+
+        let (shape, data) = match output_tensor.try_extract_tensor::<f32>() {
+            Ok((s, d)) => (s, d),
+            Err(_) => {
+                for tx in msg.result_txs {
+                    let _ = tx.send(Vec::new());
+                }
+                return;
+            }
+        };
+
+        let shape_usize: Vec<usize> = shape.iter().map(|&x| x as usize).collect();
+        let num_classes = if shape_usize.len() > 1 {
+            shape_usize[1]
+        } else {
+            shape_usize[0]
+        };
+
+        for (i, tx) in msg.result_txs.into_iter().enumerate() {
+            let start = i * num_classes;
+            let end = start + num_classes;
+            let slice = &data[start..end];
+            let result: Vec<f64> = slice.iter().map(|&x| x as f64).collect();
+            let _ = tx.send(result);
+        }
+    }
+}
+
+struct BatcherActor {
+    worker: Addr<WorkerActor>,
+    batch: Vec<ArrayD<f32>>,
+    result_txs: Vec<oneshot::Sender<Vec<f64>>>,
+    max_batch_size: usize,
+    max_wait: Duration,
+}
+
+impl Actor for BatcherActor {
+    type Context = actix::Context<Self>;
+}
+
+struct InferMessage {
+    input_array: ArrayD<f32>,
+}
+impl Message for InferMessage {
+    type Result = Result<Vec<f64>, anyhow::Error>;
+}
+
+impl Handler<InferMessage> for BatcherActor {
+    type Result = actix::Response<Result<Vec<f64>, anyhow::Error>>;
+
+    fn handle(&mut self, msg: InferMessage, ctx: &mut Self::Context) -> Self::Result {
+        let (tx, rx) = oneshot::channel();
+        self.batch.push(msg.input_array);
+        self.result_txs.push(tx);
+
+        if self.batch.len() >= self.max_batch_size {
+            self.dispatch_batch();
+        } else {
+            ctx.run_later(self.max_wait, |act, _ctx| {
+                act.dispatch_batch();
+            });
+        }
+
+        actix::Response::fut(
+            async move { rx.await.map_err(|_| anyhow::Error::msg("Channel closed")) },
+        )
+    }
+}
+
+impl BatcherActor {
+    fn dispatch_batch(&mut self) {
+        if self.batch.is_empty() {
+            return;
+        }
+
+        let batch = std::mem::take(&mut self.batch);
+        let txs = std::mem::take(&mut self.result_txs);
+
+        self.worker.do_send(BatchInferMessage {
+            batch,
+            result_txs: txs,
+        });
+    }
+}
+
+struct AppState {
+    batcher: Addr<BatcherActor>,
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let model_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("data/mnist-12.onnx");
+
+    let model_path_clone = model_path.clone();
+    let worker = SyncArbiter::start(1, move || {
+        WorkerActor::new(&model_path_clone).expect("Failed to create worker")
+    });
+
+    let batcher = BatcherActor::create(|_ctx| BatcherActor {
+        worker: worker.clone(),
+        batch: Vec::new(),
+        result_txs: Vec::new(),
+        max_batch_size: MAX_BATCH_SIZE,
+        max_wait: Duration::from_millis(MAX_WAIT_MS),
+    });
+
+    let state = Arc::new(AppState { batcher });
+
+    let app = Router::new()
+        .route("/infer", post(infer_handler))
+        .route("/health", axum::routing::get(|| async { "ok" }))
+        .layer(CorsLayer::permissive())
+        .with_state(state);
+
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:3002").await?;
+    println!("actix-with-batching-server listening on http://0.0.0.0:3002");
+
+    axum::serve(listener, app).await?;
+
+    Ok(())
+}
+
+async fn infer_handler(
+    State(state): State<Arc<AppState>>,
+    Json(input): Json<MnistInput>,
+) -> Json<MnistOutput> {
+    let start = Instant::now();
+
+    let input_array = input.to_input_array().expect("Failed to process image");
+
+    let logits = state
+        .batcher
+        .send(InferMessage { input_array })
+        .await
+        .expect("Batcher send failed")
+        .expect("Inference failed");
+
+    let logits_f32: Vec<f32> = logits.iter().map(|&x| x as f32).collect();
+    let output = MnistOutput::from_logits(&logits_f32);
+
+    let elapsed = start.elapsed();
+    println!("Request completed in {:?}", elapsed);
+
+    Json(output)
+}

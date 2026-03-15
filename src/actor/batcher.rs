@@ -37,8 +37,8 @@ impl BatcherTask {
         mut command_rx: tokio::sync::mpsc::UnboundedReceiver<Command<I, O>>,
         worker_txs: Vec<tokio::sync::mpsc::UnboundedSender<WorkerMessage>>,
         config: Arc<ServerConfig>,
-        input_name: String,
-        output_name: String,
+        input_name: Arc<str>,
+        output_name: Arc<str>,
     ) -> tokio::task::JoinHandle<()> {
         tokio::spawn(async move {
             let mut batch_buffer: Vec<Command<I, O>> = Vec::with_capacity(config.max_batch_size);
@@ -54,18 +54,16 @@ impl BatcherTask {
                 batch_buffer.push(first_cmd);
 
                 // Collect more commands until batch is full or timeout
-                let deadline = tokio::time::Instant::now() + config.max_wait_time;
-                while batch_buffer.len() < config.max_batch_size {
-                    if tokio::time::Instant::now() >= deadline {
-                        break;
-                    }
+                let sleep = tokio::time::sleep(config.max_wait_time);
+                tokio::pin!(sleep);
 
-                    match command_rx.try_recv() {
-                        Ok(cmd) => batch_buffer.push(cmd),
-                        Err(tokio::sync::mpsc::error::TryRecvError::Empty) => {
-                            tokio::task::yield_now().await;
-                        }
-                        Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => break,
+                while batch_buffer.len() < config.max_batch_size {
+                    tokio::select! {
+                        cmd = command_rx.recv() => match cmd {
+                            Some(c) => batch_buffer.push(c),
+                            None => break,
+                        },
+                        () = &mut sleep => break,
                     }
                 }
 

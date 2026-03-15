@@ -92,21 +92,21 @@ impl<I: Input, O: Output> Server<I, O> {
         let session = SessionBuilder::build(&path_str, &config)
             .map_err(|e| anyhow::Error::msg(e.to_string()))?;
 
-        let input_name = match config.input_name {
-            Some(ref name) => name.clone(),
+        let input_name: Arc<str> = match config.input_name {
+            Some(ref name) => name.clone().into(),
             None => session
                 .inputs()
                 .first()
-                .map(|i| i.name().to_string())
+                .map(|i| i.name().into())
                 .context("Model has no inputs")?,
         };
 
-        let output_name = match config.output_name {
-            Some(ref name) => name.clone(),
+        let output_name: Arc<str> = match config.output_name {
+            Some(ref name) => name.clone().into(),
             None => session
                 .outputs()
                 .first()
-                .map(|o| o.name().to_string())
+                .map(|o| o.name().into())
                 .context("Model has no outputs")?,
         };
 
@@ -162,21 +162,21 @@ impl<I: Input, O: Output> Server<I, O> {
         let session = SessionBuilder::build(&model_path_str, &config)
             .map_err(|e| anyhow::Error::msg(e.to_string()))?;
 
-        let input_name = match config.input_name {
-            Some(ref name) => name.clone(),
+        let input_name: Arc<str> = match config.input_name {
+            Some(ref name) => name.clone().into(),
             None => session
                 .inputs()
                 .first()
-                .map(|i| i.name().to_string())
+                .map(|i| i.name().into())
                 .context("Model has no inputs")?,
         };
 
-        let output_name = match config.output_name {
-            Some(ref name) => name.clone(),
+        let output_name: Arc<str> = match config.output_name {
+            Some(ref name) => name.clone().into(),
             None => session
                 .outputs()
                 .first()
-                .map(|o| o.name().to_string())
+                .map(|o| o.name().into())
                 .context("Model has no outputs")?,
         };
 
@@ -185,15 +185,15 @@ impl<I: Input, O: Output> Server<I, O> {
         Self::start(model_path_str, config, input_name, output_name)
     }
 
-    /// Start the server with the given configuration.
+/// Start the server with the given configuration.
     ///
     /// Spawns worker threads for ONNX sessions and a batcher task for
     /// collecting and dispatching requests.
     fn start(
         model_path: String,
         config: ServerConfig,
-        input_name: String,
-        output_name: String,
+        input_name: Arc<str>,
+        output_name: Arc<str>,
     ) -> Result<Self> {
         let config = Arc::new(config);
         let model_path = Arc::new(model_path);

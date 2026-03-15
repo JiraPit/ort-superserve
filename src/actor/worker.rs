@@ -3,6 +3,7 @@ use crate::session::SessionBuilder;
 use anyhow::Result;
 use ndarray::{ArrayD, IxDyn};
 use ort::session::{Session, SessionInputValue, SessionInputs};
+use ort::value::TensorRef;
 use std::sync::Arc;
 use std::thread;
 
@@ -84,9 +85,9 @@ impl WorkerTask {
 
         tracing::info!("Worker {}: Processing inference...", worker_id);
 
-        // Create input tensor
-        let input_value = match ort::value::Value::from_array(batched_tensor.clone()) {
-            Ok(v) => v,
+        // Create input tensor (zero-copy view)
+        let input_value = match TensorRef::from_array_view(batched_tensor.view()) {
+            Ok(v) => v.into_dyn(),
             Err(e) => {
                 tracing::error!("Worker {}: Failed to create input tensor: {e:#}", worker_id);
                 let _ = result_tx.send(Err(anyhow::Error::msg(e.to_string())));
@@ -96,7 +97,7 @@ impl WorkerTask {
 
         // Create input map
         let inputs: SessionInputs = SessionInputs::ValueMap(vec![(
-            std::borrow::Cow::Borrowed(input_name.as_str()),
+            std::borrow::Cow::Borrowed(&input_name),
             SessionInputValue::Owned(input_value.into()),
         )]);
 
@@ -111,7 +112,7 @@ impl WorkerTask {
         };
 
         // Extract output tensor
-        let output_tensor = match outputs.get(&output_name) {
+        let output_tensor = match outputs.get(&*output_name) {
             Some(v) => v,
             None => {
                 tracing::error!(
@@ -180,9 +181,9 @@ pub struct WorkerMessage {
     /// Batched input tensor with shape `[batch_size, ...]`.
     pub batched_tensor: ArrayD<f32>,
     /// Name of the ONNX input tensor.
-    pub input_name: String,
+    pub input_name: Arc<str>,
     /// Name of the ONNX output tensor.
-    pub output_name: String,
+    pub output_name: Arc<str>,
     /// Channel to send sliced outputs back to batcher.
     pub result_tx: tokio::sync::oneshot::Sender<Result<Vec<ArrayD<f32>>>>,
 }

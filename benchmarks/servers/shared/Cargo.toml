@@ -1,0 +1,12 @@
+[package]
+name = "shared"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.102"
+base64 = "0.22.1"
+image = "0.25.10"
+ndarray = "0.17.2"
+rand = "0.8"
+serde = { version = "1.0.228", features = ["derive"] }

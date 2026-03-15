@@ -1,0 +1,11 @@
+[workspace]
+resolver = "2"
+members = [
+    "servers/shared",
+    "servers/arc-mutex-server",
+    "servers/actix-without-batching-server",
+    "servers/batched-fn-server",
+    "servers/actix-with-batching-server",
+    "servers/ort-superserve-server",
+    "bench-client",
+]

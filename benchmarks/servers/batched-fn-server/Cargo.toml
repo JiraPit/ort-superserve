@@ -1,0 +1,15 @@
+[package]
+name = "batched-fn-server"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.102"
+axum = "0.8.8"
+batched-fn = "0.2.5"
+ndarray = "0.17.2"
+once_cell = "1.21.4"
+ort = { version = "2.0.0-rc.12", features = ["load-dynamic"] }
+shared = { version = "0.1.0", path = "../shared" }
+tokio = { version = "1.50.0", features = ["full"] }
+tower-http = { version = "0.6.8", features = ["cors"] }
