@@ -83,11 +83,17 @@ async fn main() -> Result<()> {
         }
     }
 
+    // Load all available images (shared across workers)
+    let all_images: Arc<Vec<Vec<u8>>> = Arc::new(load_all_images(&args.data_dir)?);
+    if all_images.is_empty() {
+        anyhow::bail!("No images found in {}", args.data_dir.display());
+    }
+    println!("Loaded {} images", all_images.len());
+
     // Warmup
     println!("Running warmup...");
-    let warmup_images: Vec<Vec<u8>> = load_random_images(&args.data_dir, args.warmup_requests)?;
-    for image in warmup_images {
-        let input = MnistInput::from_png_bytes(image);
+    for image in all_images.iter().take(args.warmup_requests) {
+        let input = MnistInput::from_png_bytes(image.clone());
         let client = reqwest::Client::new();
         let _ = client.post(&infer_url).json(&input).send().await?;
     }
@@ -111,10 +117,6 @@ async fn main() -> Result<()> {
         latencies
     });
 
-    // Load images
-    let total_requests_estimate = args.max_concurrency * 100; // Rough estimate
-    let all_images: Vec<Vec<u8>> = load_random_images(&args.data_dir, total_requests_estimate)?;
-
     // Start benchmark
     println!("Starting benchmark...");
     let start_time = Instant::now();
@@ -127,17 +129,14 @@ async fn main() -> Result<()> {
         let url = infer_url.clone();
         let metrics = metrics.clone();
         let latency_tx = latency_tx.clone();
-        let images: Vec<Vec<u8>> = all_images
-            .iter()
-            .skip(worker_id % all_images.len())
-            .cloned()
-            .collect();
+        let images = Arc::clone(&all_images);
         let ramp_duration = args.ramp_duration;
         let hold_duration = args.hold_duration;
         let max_concurrency = args.max_concurrency;
 
         let handle = tokio::spawn(async move {
-            let mut local_image_index = 0;
+            // Each worker starts at a different offset to distribute load
+            let mut image_index = worker_id % images.len();
             let start_time = Instant::now();
 
             loop {
@@ -156,8 +155,8 @@ async fn main() -> Result<()> {
                     break;
                 }
 
-                // Send request
-                let image = &images[local_image_index % images.len()];
+                // Send request - cycle through all images indefinitely
+                let image = &images[image_index % images.len()];
                 let input = MnistInput::from_png_bytes(image.clone());
 
                 let request_start = Instant::now();
@@ -171,7 +170,7 @@ async fn main() -> Result<()> {
                     _ => {}
                 }
 
-                local_image_index += 1;
+                image_index += 1;
             }
         });
 
@@ -248,10 +247,9 @@ fn percentile(sorted: &[u64], p: u64) -> u64 {
     sorted[idx]
 }
 
-fn load_random_images(data_dir: &PathBuf, count: usize) -> Result<Vec<Vec<u8>>> {
+fn load_all_images(data_dir: &PathBuf) -> Result<Vec<Vec<u8>>> {
     use std::fs;
 
-    let mut images = Vec::new();
     let mut files: Vec<_> = fs::read_dir(data_dir)?
         .filter_map(|e| e.ok())
         .filter(|e| {
@@ -266,10 +264,10 @@ fn load_random_images(data_dir: &PathBuf, count: usize) -> Result<Vec<Vec<u8>>> 
     let mut rng = rand::thread_rng();
     files.shuffle(&mut rng);
 
-    for entry in files.iter().take(count) {
-        let bytes = fs::read(entry.path())?;
-        images.push(bytes);
-    }
+    let images: Vec<Vec<u8>> = files
+        .iter()
+        .filter_map(|entry| fs::read(entry.path()).ok())
+        .collect();
 
     Ok(images)
 }
