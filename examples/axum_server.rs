@@ -7,22 +7,21 @@ use axum::{
     extract::State,
     routing::{get, post},
 };
-use ndarray::{Array3, ArrayD, ArrayViewD, Axis};
+use ndarray::{Array1, ArrayD, ArrayViewD, Axis};
 use ort_superserve::{Input, Output, Server, ServerConfig};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::signal;
 
-/// Input type for the inference request.
 struct ArrayInput {
-    data: Array3<f32>,
+    data: Array1<f32>,
 }
 
 impl Input for ArrayInput {
-    type Preprocessed = Array3<f32>;
+    type Preprocessed = Array1<f32>;
 
     async fn preprocess(self) -> Result<Self::Preprocessed> {
-        tokio::task::spawn_blocking(move || Ok(self.data)).await?
+        Ok(self.data)
     }
 
     fn batch(items: Vec<Self::Preprocessed>) -> Result<ArrayD<f32>> {
@@ -32,52 +31,44 @@ impl Input for ArrayInput {
     }
 }
 
-/// Output type for the inference response.
 #[derive(Debug, Serialize)]
 struct ArrayOutput {
-    scores: Vec<f32>,
+    values: Vec<f32>,
 }
 
 impl Output for ArrayOutput {
     async fn postprocess(raw: ArrayViewD<'_, f32>) -> Result<Self> {
-        let scores: Vec<f32> = raw.iter().cloned().collect();
-        Ok(ArrayOutput { scores })
+        Ok(ArrayOutput {
+            values: raw.iter().cloned().collect(),
+        })
     }
 }
 
-/// HTTP request body for inference.
 #[derive(Deserialize)]
 struct InferRequest {
     data: Vec<f32>,
-    height: usize,
-    width: usize,
-    channels: usize,
 }
 
-/// HTTP response body for inference.
 #[derive(Serialize)]
 struct InferResponse {
-    scores: Vec<f32>,
+    values: Vec<f32>,
 }
 
-/// Handler for POST /infer endpoint.
 async fn infer_handler(
     State(server): State<Arc<Server<ArrayInput, ArrayOutput>>>,
     Json(req): Json<InferRequest>,
 ) -> Json<InferResponse> {
-    let data = Array3::from_shape_vec((req.channels, req.height, req.width), req.data)
-        .expect("Invalid input shape");
-
-    let input = ArrayInput { data };
+    let input = ArrayInput {
+        data: Array1::from_vec(req.data),
+    };
 
     let output = server.infer(input).await.expect("Inference failed");
 
     Json(InferResponse {
-        scores: output.scores,
+        values: output.values,
     })
 }
 
-/// Handler for GET /health endpoint.
 async fn health_handler() -> &'static str {
     "ok"
 }
@@ -90,15 +81,10 @@ async fn main() -> Result<()> {
         .nth(1)
         .expect("Usage: axum_server <model.onnx>");
 
-    println!("Loading model from {}...", model_path);
-
     let config = ServerConfig::new()
         .with_num_sessions(4)
         .with_threads_per_session(2)
-        .with_max_batch_size(16)
-        .with_min_batch_size(1);
-
-    println!("Server initialized with {} sessions", config.num_sessions);
+        .with_max_batch_size(16);
 
     let server = Arc::new(Server::<ArrayInput, ArrayOutput>::from_file(&model_path, config).await?);
 
@@ -114,7 +100,6 @@ async fn main() -> Result<()> {
         .with_graceful_shutdown(shutdown_signal())
         .await?;
 
-    println!("Server shut down gracefully");
     Ok(())
 }
 
