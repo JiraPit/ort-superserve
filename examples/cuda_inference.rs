@@ -10,7 +10,8 @@ impl Input for ArrayInput {
     type Preprocessed = Array3<f32>;
 
     async fn preprocess(self) -> Result<Self::Preprocessed> {
-        tokio::task::spawn_blocking(move || Ok(self.data)).await?
+        // Preprocessing logic goes here
+        Ok(self.data)
     }
 
     fn batch(items: Vec<Self::Preprocessed>) -> Result<ArrayD<f32>> {
@@ -28,6 +29,7 @@ struct ArrayOutput {
 
 impl Output for ArrayOutput {
     async fn postprocess(raw: ArrayViewD<'_, f32>) -> Result<Self> {
+        // Postprocessing logic goes here
         Ok(ArrayOutput {
             values: raw.iter().cloned().collect(),
         })

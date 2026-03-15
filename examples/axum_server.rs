@@ -21,6 +21,7 @@ impl Input for ArrayInput {
     type Preprocessed = Array1<f32>;
 
     async fn preprocess(self) -> Result<Self::Preprocessed> {
+        // Preprocessing logic goes here
         Ok(self.data)
     }
 
@@ -38,6 +39,7 @@ struct ArrayOutput {
 
 impl Output for ArrayOutput {
     async fn postprocess(raw: ArrayViewD<'_, f32>) -> Result<Self> {
+        // Postprocessing logic goes here
         Ok(ArrayOutput {
             values: raw.iter().cloned().collect(),
         })
