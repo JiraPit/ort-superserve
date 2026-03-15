@@ -56,15 +56,36 @@ impl ImageInput {
         Ok(Self { image_bytes: bytes })
     }
 
-    /// Decodes the PNG bytes into an RGB image buffer resized to 224x224.
+    /// Decodes the PNG bytes and applies ImageNet preprocessing:
+    /// 1. Resize so shorter side is 256 (maintain aspect ratio)
+    /// 2. Center crop to 224x224
     pub fn decode(&self) -> Result<ImageBuffer<Rgb<u8>, Vec<u8>>> {
         let img = image::load_from_memory(&self.image_bytes)?;
         let rgb = img.to_rgb8();
 
-        let resized =
-            image::imageops::resize(&rgb, 224, 224, image::imageops::FilterType::Triangle);
+        let (width, height) = rgb.dimensions();
+        let min_dim = width.min(height);
 
-        Ok(resized)
+        let (new_width, new_height) = if width < height {
+            let ratio = 256.0 / min_dim as f32;
+            ((width as f32 * ratio) as u32, 256)
+        } else {
+            let ratio = 256.0 / min_dim as f32;
+            (256, (height as f32 * ratio) as u32)
+        };
+
+        let resized = image::imageops::resize(
+            &rgb,
+            new_width,
+            new_height,
+            image::imageops::FilterType::Triangle,
+        );
+
+        let crop_x = (new_width - 224) / 2;
+        let crop_y = (new_height - 224) / 2;
+        let cropped = image::imageops::crop_imm(&resized, crop_x, crop_y, 224, 224).to_image();
+
+        Ok(cropped)
     }
 
     /// Converts the image into an ONNX-compatible input tensor.
