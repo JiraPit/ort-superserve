@@ -41,15 +41,15 @@ coreml = ["ort-superserve/coreml"]
 
 ```rust
 use anyhow::Result;
-use ndarray::{ArrayD, ArrayViewD, Array3, Axis};
-use ort_superserve::{Input, Output, Server, ServerConfig};
+use ndarray::{ArrayD, ArrayViewD, Array3};
+use ort_superserve::{helpers::batch_array, Input, Output, Server, ServerConfig};
 
 // 1. Define your input type
-struct ImageInput {
+struct MyInput {
     data: Array3<f32>,
 }
 
-impl Input for ImageInput {
+impl Input for MyInput {
     type Preprocessed = Array3<f32>;
 
     async fn preprocess(self) -> Result<Self::Preprocessed> {
@@ -58,21 +58,19 @@ impl Input for ImageInput {
     }
 
     fn batch(items: Vec<Self::Preprocessed>) -> Result<ArrayD<f32>> {
-        // Stack multiple preprocessed inputs into a batch
-        let views: Vec<_> = items.iter().map(|a| a.view()).collect();
-        Ok(ndarray::stack(Axis(0), &views)?.into_dyn())
+        batch_array(&items)
     }
 }
 
 // 2. Define your output type
-struct DetectionOutput {
+struct MyOutput {
     scores: Vec<f32>,
 }
 
-impl Output for DetectionOutput {
+impl Output for MyOutput {
     async fn postprocess(raw: ArrayViewD<'_, f32>) -> Result<Self> {
         // Your postprocessing logic (runs in parallel)
-        Ok(DetectionOutput {
+        Ok(MyOutput {
             scores: raw.iter().cloned().collect(),
         })
     }
@@ -86,9 +84,9 @@ async fn main() -> Result<()> {
         .with_threads_per_session(2)
         .with_max_batch_size(16);
 
-    let server = Server::<ImageInput, DetectionOutput>::from_file("model.onnx", config).await?;
+    let server = Server::<MyInput, MyOutput>::from_file("model.onnx", config).await?;
 
-    let output = server.infer(ImageInput { data: Array3::zeros((3, 224, 224)) }).await?;
+    let output = server.infer(MyInput { data: Array3::zeros((3, 224, 224)) }).await?;
     
     server.shutdown();
     Ok(())
