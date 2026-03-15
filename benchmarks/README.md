@@ -1,44 +1,35 @@
 # ONNX Session Management Benchmarks
 
-This directory contains benchmarks comparing different approaches to ONNX session management for high-throughput model serving.
+This directory contains benchmarks comparing different approaches to ONNX session management for high-throughput model serving using ResNet50.
+
+## Preprocessing Pipeline
+
+| Step | Description | Where it Happens |
+|------|-------------|------------------|
+| 1 | **Receive request** - Deserialize JSON with base64 PNG | Axum handler |
+| 2 | **Decode + Resize + Crop** - PNG→RGB, scale to 256, center crop to 224x224 | Server (`ImageInput::to_input_array()`) |
+| 3 | **Normalize** - Apply ImageNet mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225] | Server (Axum handler or `Input::preprocess()`) |
+| 4 | **Inference** - Run ONNX model | Server |
+| 5 | **Postprocess** - Convert logits to class_id + confidence | Server |
 
 ## Benchmark Servers
 
 | Server | Port | Description |
 |--------|------|-------------|
-| `ort-superserve-server` | 3001 | ort-superserve library with dynamic batching and JoinSet parallelism |
-| `actix-with-batching-server` | 3002 | Manual actix actors with batching (preprocessing in async handlers) |
-| `actix-without-batching-server` | 3003 | Manual actix actor without batching (single worker) |
+| `ort-superserve-server` | 3001 | ort-superserve library with dynamic batching |
+| `ort-superserve-8-sessions-server` | 3006 | ort-superserve with 8 sessions |
+| `actix-with-batching-server` | 3002 | Manual actix actors with batching |
+| `actix-without-batching-server` | 3003 | Manual actix actor without batching |
 | `arc-mutex-server` | 3004 | Naive `Arc<Mutex<Session>>` baseline |
-| `batched-fn-server` | 3005 | Using `batched-fn` crate for transparent batching (parallel preprocessing in handlers) |
-
-## Architecture Comparison
-
-| Server | Batching | Preprocessing | Postprocessing | Session Count | Intra Threads |
-|--------|----------|---------------|----------------|---------------|---------------|
-| ort-superserve | ✅ Dynamic | ✅ JoinSet (parallel within batch) | ✅ JoinSet (parallel within batch) | 1 | 4 |
-| actix-with-batching | ✅ Manual | ✅ Async handlers (parallel across requests) | ✅ Async handlers (parallel across requests) | 1 | 4 |
-| actix-without-batching | ❌ | ✅ Async handlers | ✅ Async handlers | 1 | 4 |
-| arc-mutex | ❌ | ✅ Async handlers | ✅ Async handlers | 1 | 4 |
-| batched-fn | ✅ Macro | ✅ Async handlers (parallel across requests) | ✅ Async handlers (parallel across requests) | 1 | 4 |
-
-### Preprocessing Parallelism Explained
-
-- **ort-superserve**: When a batch of N items is ready, spawns N async tasks via `JoinSet` to preprocess all items **within the batch** in parallel, then batches and sends to worker.
-- **actix-with-batching**: Each HTTP handler preprocesses its own request before sending to the batcher. Multiple handlers run **concurrently**, so preprocessing is parallel **across requests**.
-- **batched-fn**: Each HTTP handler preprocesses its own request before sending to the batcher. Multiple handlers run **concurrently**, so preprocessing is parallel **across requests**.
-
-## Prerequisites
-
-1. **Rust** - Install from https://rustup.rs
-2. **Python 3** - For download script and plotting
-3. **MNIST Model** - Automatically downloaded
+| `batched-fn-server` | 3005 | Using `batched-fn` crate for transparent batching |
 
 ## Quick Start
 
 ```bash
-# Download MNIST data (model and test images)
-python3 download_data.py
+# Download ResNet50 model and test images
+cd download_data
+uv run download-data --data-dir ../data
+cd ..
 
 # Build all servers
 cargo build --release
@@ -72,92 +63,8 @@ cargo run --release --bin bench-client -- \
 | `--max-concurrency` | 2048 | Maximum concurrent requests |
 | `--warmup-requests` | 10 | Warmup requests before benchmarking |
 
-## Results
-
-After running benchmarks, results are stored in `results/` as CSV files with:
-
-- `server` - Server name
-- `total_requests` - Total requests completed
-- `duration_sec` - Total benchmark duration
-- `throughput_rps` - Requests per second
-- `latency_p50_ms` - Median latency
-- `latency_p90_ms` - 90th percentile latency
-- `latency_p99_ms` - 99th percentile latency
-
-## Generating Plots
-
-```bash
-cd plots
-pip install -r requirements.txt
-python3 plot.py
-```
-
-Plots are saved to `results/`:
-- `latency_comparison.png` - Latency comparison bar chart
-- `throughput_comparison.png` - Throughput comparison bar chart
-
-## Directory Structure
-
-```
-benchmarks/
-├── Cargo.toml                    # Workspace definition
-├── download_data.py              # MNIST data download script
-├── run_benchmarks.sh             # Orchestration script
-├── data/
-│   ├── mnist-12.onnx            # ONNX model
-│   └── images/                   # MNIST test images (PNG)
-├── results/                      # Benchmark results (CSV, PNG)
-├── plots/
-│   ├── plot.py                  # Matplotlib visualization
-│   └── requirements.txt         # Python dependencies
-├── servers/
-│   ├── shared/                  # Common types and utilities
-│   ├── arc-mutex-server/        # Arc<Mutex> baseline
-│   ├── actix-without-batching-server/  # Actix actor, no batching
-│   ├── actix-with-batching-server/     # Actix actors with batching
-│   ├── batched-fn-server/       # batched-fn macro approach
-│   └── ort-superserve-server/   # ort-superserve library
-└── bench-client/               # Benchmark client
-```
-
 ## Model
 
-Uses MNIST-12 ONNX model from the ONNX Model Zoo:
-- Input: `[batch_size, 1, 28, 28]` - Grayscale images
-- Output: `[batch_size, 10]` - Class logits
-
-## Lines of Code (LOC) Comparison
-
-Run the counting script:
-
-```bash
-./count_loc.sh
-```
-
-### Results
-
-**Server-specific code only** (excludes shared library used by all):
-
-| Server | Lines of Code |
-|--------|---------------|
-| `arc-mutex-server` | 68 |
-| `ort-superserve-server` | 82 |
-| `actix-without-batching-server` | 94 |
-| `batched-fn-server` | 136 |
-| `actix-with-batching-server` | 209 |
-
-**Total including shared library** (247 lines):
-
-| Server | Total Lines |
-|--------|-------------|
-| `arc-mutex-server` | 315 |
-| `ort-superserve-server` | 329 |
-| `actix-without-batching-server` | 341 |
-| `batched-fn-server` | 383 |
-| `actix-with-batching-server` | 456 |
-
-The naive `Arc<Mutex<Session>>` approach requires the least code (68 lines), but provides no batching and poor throughput under load. `ort-superserve` achieves production-grade batching and parallelism with only 14 additional lines compared to the naive baseline. In contrast, manually implementing batching with actix actors requires 209 lines—2.5x more code than ort-superserve.
-
-## License
-
-MIT
+ResNet50-v1-12-int8 (ImageNet):
+- Input: `[batch_size, 3, 224, 224]` - RGB images normalized
+- Output: `[batch_size, 1000]` - ImageNet class logits
