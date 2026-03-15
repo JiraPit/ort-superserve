@@ -131,11 +131,15 @@ async fn infer_handler(
     .await
     .expect("Preprocessing task failed");
 
-    let logits = state
+    let logits: Vec<f32> = state
         .actor
         .send(InferMessage { input_array })
         .await
         .expect("Actor send failed");
+
+    if logits.is_empty() {
+        panic!("Inference returned empty logits");
+    }
 
     let output = ImageOutput::from_logits(&logits);
 

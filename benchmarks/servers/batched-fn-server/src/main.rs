@@ -181,6 +181,10 @@ async fn infer_handler(
         .await
         .expect("Batched inference failed");
 
+    if logits.is_empty() {
+        panic!("Inference returned empty logits");
+    }
+
     let output = ImageOutput::from_logits(&logits);
 
     let _elapsed = start.elapsed();
