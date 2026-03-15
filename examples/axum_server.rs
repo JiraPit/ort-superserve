@@ -7,8 +7,8 @@ use axum::{
     extract::State,
     routing::{get, post},
 };
-use ndarray::{Array1, ArrayD, ArrayViewD, Axis};
-use ort_superserve::{Input, Output, Server, ServerConfig};
+use ndarray::{Array1, ArrayD, ArrayViewD};
+use ort_superserve::{Input, Output, Server, ServerConfig, helpers::batch_array};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::signal;
@@ -26,9 +26,7 @@ impl Input for ArrayInput {
     }
 
     fn batch(items: Vec<Self::Preprocessed>) -> Result<ArrayD<f32>> {
-        let views: Vec<_> = items.iter().map(|a| a.view()).collect();
-        let batched = ndarray::stack(Axis(0), &views)?;
-        Ok(batched.into_dyn())
+        batch_array(&items)
     }
 }
 

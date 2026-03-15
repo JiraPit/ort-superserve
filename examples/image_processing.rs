@@ -10,7 +10,7 @@
 use anyhow::Result;
 use image::{DynamicImage, ImageBuffer, Rgb};
 use ndarray::{Array3, ArrayD, ArrayViewD, Axis};
-use ort_superserve::{Input, Output, Server, ServerConfig};
+use ort_superserve::{Input, Output, Server, ServerConfig, helpers::batch_array};
 use std::path::PathBuf;
 
 /// Input type that holds a dynamic image.
@@ -56,9 +56,7 @@ impl Input for ImageInput {
     }
 
     fn batch(items: Vec<Self::Preprocessed>) -> Result<ArrayD<f32>> {
-        let views: Vec<_> = items.iter().map(|a| a.view()).collect();
-        let batched = ndarray::stack(Axis(0), &views)?;
-        Ok(batched.into_dyn())
+        batch_array(&items)
     }
 }
 

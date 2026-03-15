@@ -31,8 +31,8 @@
 //!
 //! ```rust,no_run
 //! use anyhow::Result;
-//! use ndarray::{ArrayD, ArrayViewD, Array3, Axis};
-//! use ort_superserve::{Input, Output, Server, ServerConfig};
+//! use ndarray::{ArrayD, ArrayViewD, Array3};
+//! use ort_superserve::{helpers::batch_array, Input, Output, Server, ServerConfig};
 //!
 //! struct ImageInput { data: Array3<f32> }
 //!
@@ -44,8 +44,7 @@
 //!     }
 //!
 //!     fn batch(items: Vec<Self::Preprocessed>) -> Result<ArrayD<f32>> {
-//!         let views: Vec<_> = items.iter().map(|a| a.view()).collect();
-//!         Ok(ndarray::stack(Axis(0), &views)?.into_dyn())
+//!         batch_array(&items)
 //!     }
 //! }
 //!
@@ -73,6 +72,7 @@
 pub mod actor;
 pub mod config;
 pub mod error;
+pub mod helpers;
 pub mod server;
 pub mod session;
 pub mod traits;

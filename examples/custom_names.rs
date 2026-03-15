@@ -1,6 +1,6 @@
 use anyhow::Result;
-use ndarray::{Array3, ArrayD, ArrayViewD, Axis};
-use ort_superserve::{Input, Output, Server, ServerConfig};
+use ndarray::{Array3, ArrayD, ArrayViewD};
+use ort_superserve::{Input, Output, Server, ServerConfig, helpers::batch_array};
 
 struct ArrayInput {
     data: Array3<f32>,
@@ -15,9 +15,7 @@ impl Input for ArrayInput {
     }
 
     fn batch(items: Vec<Self::Preprocessed>) -> Result<ArrayD<f32>> {
-        let views: Vec<_> = items.iter().map(|a| a.view()).collect();
-        let batched = ndarray::stack(Axis(0), &views)?;
-        Ok(batched.into_dyn())
+        batch_array(&items)
     }
 }
 

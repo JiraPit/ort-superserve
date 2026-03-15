@@ -8,8 +8,8 @@
 //! - Wrapping all CPU-bound work in `spawn_blocking`
 
 use anyhow::Result;
-use ndarray::{Array1, ArrayD, ArrayViewD, Axis};
-use ort_superserve::{Input, Output, Server, ServerConfig};
+use ndarray::{Array1, ArrayD, ArrayViewD};
+use ort_superserve::{Input, Output, Server, ServerConfig, helpers::batch_array};
 use std::path::PathBuf;
 
 /// Raw audio samples loaded from WAV file.
@@ -82,9 +82,7 @@ impl Input for AudioInput {
     }
 
     fn batch(items: Vec<Self::Preprocessed>) -> Result<ArrayD<f32>> {
-        let views: Vec<_> = items.iter().map(|a| a.view()).collect();
-        let batched = ndarray::stack(Axis(0), &views)?;
-        Ok(batched.into_dyn())
+        batch_array(&items)
     }
 }
 

@@ -1,5 +1,5 @@
-use ndarray::{Array3, ArrayD, ArrayViewD, Axis};
-use ort_superserve::{Input, Output};
+use ndarray::{Array3, ArrayD, ArrayViewD};
+use ort_superserve::{Input, Output, helpers::batch_array};
 
 struct MockInput {
     data: Array3<f32>,
@@ -13,9 +13,7 @@ impl Input for MockInput {
     }
 
     fn batch(items: Vec<Self::Preprocessed>) -> anyhow::Result<ArrayD<f32>> {
-        let views: Vec<_> = items.iter().map(|a| a.view()).collect();
-        let batched = ndarray::stack(Axis(0), &views)?;
-        Ok(batched.into_dyn())
+        batch_array(&items)
     }
 }
 
