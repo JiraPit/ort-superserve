@@ -48,13 +48,8 @@ impl AudioInput {
     }
 }
 
-/// Preprocessed audio ready for batching.
-struct PreprocessedAudio {
-    data: Array1<f32>,
-}
-
 impl Input for AudioInput {
-    type Preprocessed = PreprocessedAudio;
+    type Preprocessed = Array1<f32>;
 
     async fn preprocess(self) -> Result<Self::Preprocessed> {
         tokio::task::spawn_blocking(move || {
@@ -81,15 +76,13 @@ impl Input for AudioInput {
             // Normalize to fixed length
             let normalized = normalize(&resampled, target_length);
 
-            Ok(PreprocessedAudio {
-                data: Array1::from_vec(normalized),
-            })
+            Ok(Array1::from_vec(normalized))
         })
         .await?
     }
 
     fn batch(items: Vec<Self::Preprocessed>) -> Result<ArrayD<f32>> {
-        let views: Vec<_> = items.iter().map(|a| a.data.view()).collect();
+        let views: Vec<_> = items.iter().map(|a| a.view()).collect();
         let batched = ndarray::stack(Axis(0), &views)?;
         Ok(batched.into_dyn())
     }

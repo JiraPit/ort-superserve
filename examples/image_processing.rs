@@ -25,13 +25,8 @@ impl ImageInput {
     }
 }
 
-/// Preprocessed image data ready for batching.
-struct PreprocessedImage {
-    data: Array3<f32>,
-}
-
 impl Input for ImageInput {
-    type Preprocessed = PreprocessedImage;
+    type Preprocessed = Array3<f32>;
 
     async fn preprocess(self) -> Result<Self::Preprocessed> {
         tokio::task::spawn_blocking(move || {
@@ -55,13 +50,13 @@ impl Input for ImageInput {
                 }
             }
 
-            Ok(PreprocessedImage { data })
+            Ok(data)
         })
         .await?
     }
 
     fn batch(items: Vec<Self::Preprocessed>) -> Result<ArrayD<f32>> {
-        let views: Vec<_> = items.iter().map(|item| item.data.view()).collect();
+        let views: Vec<_> = items.iter().map(|a| a.view()).collect();
         let batched = ndarray::stack(Axis(0), &views)?;
         Ok(batched.into_dyn())
     }
