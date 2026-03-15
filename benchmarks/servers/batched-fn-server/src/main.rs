@@ -28,13 +28,13 @@ static SESSION: Lazy<Mutex<Session>> = Lazy::new(|| {
         .unwrap()
         .parent()
         .unwrap()
-        .join("data/mobilenetv2-12-int8.onnx");
+        .join("data/resnet50-v1-12-int8.onnx");
 
     let session = Session::builder()
         .expect("Failed to create builder")
         .with_optimization_level(GraphOptimizationLevel::Level3)
         .expect("Failed to set optimization")
-        .with_intra_threads(4)
+        .with_intra_threads(1)
         .expect("Failed to set threads")
         .commit_from_file(&model_path)
         .expect("Failed to load model");

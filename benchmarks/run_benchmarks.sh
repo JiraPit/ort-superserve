@@ -4,8 +4,8 @@ set -e
 cd "$(dirname "$0")"
 
 # Download data if needed
-if [ ! -f "data/mobilenetv2-12-int8.onnx" ] || [ ! -d "data/images" ]; then
-    echo "Downloading MobileNetV2 data..."
+if [ ! -f "data/resnet50-v1-12-int8.onnx" ] || [ ! -d "data/images" ]; then
+    echo "Downloading ResNet50 data..."
     cd download_data
     uv run download-data --data-dir ../data
     cd ..
@@ -22,13 +22,14 @@ declare -A PORTS=(
     ["actix-without-batching"]=3003
     ["arc-mutex"]=3004
     ["batched-fn"]=3005
+    ["ort-superserve-8-sessions"]=3006
 )
 
 # Create results directory
 mkdir -p results
 
 # Run benchmarks
-for server in ort-superserve actix-with-batching actix-without-batching arc-mutex batched-fn; do
+for server in ort-superserve ort-superserve-8-sessions actix-with-batching actix-without-batching arc-mutex batched-fn; do
     port=${PORTS[$server]}
     echo ""
     echo "================================================"
@@ -50,8 +51,8 @@ for server in ort-superserve actix-with-batching actix-without-batching arc-mute
         --port $port \
         --output results/${server}.csv \
         --ramp-duration 60 \
-        --hold-duration 30 \
-        --max-concurrency 2048
+        --hold-duration 120 \
+        --max-concurrency 3000
     
     # Stop server
     echo "Stopping $server..."

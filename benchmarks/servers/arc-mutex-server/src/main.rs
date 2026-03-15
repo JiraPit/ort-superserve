@@ -26,13 +26,13 @@ async fn main() -> Result<()> {
         .unwrap()
         .parent()
         .unwrap()
-        .join("data/mobilenetv2-12-int8.onnx");
+        .join("data/resnet50-v1-12-int8.onnx");
 
     let session = Session::builder()
         .map_err(|e| anyhow::Error::msg(e.to_string()))?
         .with_optimization_level(GraphOptimizationLevel::Level3)
         .map_err(|e| anyhow::Error::msg(e.to_string()))?
-        .with_intra_threads(4)
+        .with_intra_threads(1)
         .map_err(|e| anyhow::Error::msg(e.to_string()))?
         .commit_from_file(&model_path)
         .map_err(|e| anyhow::Error::msg(e.to_string()))?;

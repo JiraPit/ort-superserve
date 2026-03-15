@@ -1,4 +1,4 @@
-//! Shared types for MobileNetV2 image classification across benchmark servers.
+//! Shared types for ResNet50 image classification across benchmark servers.
 
 use anyhow::Result;
 use image::{ImageBuffer, Rgb};
@@ -75,7 +75,7 @@ impl MnistInput {
         let rgb = self.decode()?;
         let (width, height) = rgb.dimensions();
 
-        // MobileNetV2 expects NCHW format: [C, H, W]
+        // ResNet50 expects NCHW format: [C, H, W]
         // Channel-first layout: RRR...GGG...BBB
         let mut data = Vec::with_capacity((width * height * 3) as usize);
 

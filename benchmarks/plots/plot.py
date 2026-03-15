@@ -58,6 +58,7 @@ def main():
 
     colors = {
         "ort-superserve": "blue",
+        "ort-superserve-8-sessions": "cyan",
         "actix-with-batching": "green",
         "actix-without-batching": "orange",
         "arc-mutex": "red",

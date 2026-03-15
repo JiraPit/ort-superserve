@@ -32,7 +32,7 @@ impl WorkerTask {
     ///
     /// A `JoinHandle` for the spawned thread.
     pub fn spawn(
-        mut worker_rx: tokio::sync::mpsc::UnboundedReceiver<WorkerMessage>,
+        worker_rx: kanal::AsyncReceiver<WorkerMessage>,
         model_path: Arc<String>,
         config: Arc<ServerConfig>,
         worker_id: usize,
@@ -56,11 +56,11 @@ impl WorkerTask {
 
             tracing::info!("Worker {}: Session initialized successfully.", worker_id);
 
-            // Process batches until channel closes
+            let sync_rx = worker_rx.clone().to_sync();
             loop {
-                let msg = match worker_rx.blocking_recv() {
-                    Some(m) => m,
-                    None => {
+                let msg = match sync_rx.recv() {
+                    Ok(m) => m,
+                    Err(_) => {
                         tracing::info!("Worker {}: Channel closed, shutting down.", worker_id);
                         break;
                     }

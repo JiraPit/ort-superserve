@@ -3,9 +3,9 @@ use crate::config::ServerConfig;
 use crate::session::SessionBuilder;
 use crate::traits::{Input, Output};
 use anyhow::{Context, Result};
+use kanal;
 use std::path::Path;
 use std::sync::Arc;
-use tokio::sync::mpsc;
 
 /// ONNX Runtime inference server with dynamic batching and session pooling.
 ///
@@ -57,7 +57,7 @@ use tokio::sync::mpsc;
 /// ```
 pub struct Server<I: Input, O: Output> {
     /// Channel sender for dispatching inference commands to the batcher.
-    command_tx: mpsc::UnboundedSender<Command<I, O>>,
+    command_tx: kanal::AsyncSender<Command<I, O>>,
     _phantom: std::marker::PhantomData<O>,
 }
 
@@ -198,13 +198,12 @@ impl<I: Input, O: Output> Server<I, O> {
         let config = Arc::new(config);
         let model_path = Arc::new(model_path);
 
-        let (command_tx, command_rx) = mpsc::unbounded_channel::<Command<I, O>>();
+        let (command_tx, command_rx) = kanal::unbounded_async::<Command<I, O>>();
 
-        // Create per-worker channels for lock-free dispatch
-        let mut worker_txs: Vec<tokio::sync::mpsc::UnboundedSender<WorkerMessage>> = Vec::new();
+        let mut worker_txs: Vec<kanal::AsyncSender<WorkerMessage>> = Vec::new();
 
         for worker_id in 0..config.num_sessions {
-            let (worker_tx, worker_rx) = tokio::sync::mpsc::unbounded_channel::<WorkerMessage>();
+            let (worker_tx, worker_rx) = kanal::unbounded_async::<WorkerMessage>();
             worker_txs.push(worker_tx);
 
             WorkerTask::spawn(
@@ -250,6 +249,7 @@ impl<I: Input, O: Output> Server<I, O> {
 
         self.command_tx
             .send(Command::new(input, responder))
+            .await
             .map_err(|_| anyhow::Error::msg("Server channel closed"))?;
 
         response.await.context("Response channel closed")?

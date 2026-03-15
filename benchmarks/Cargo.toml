@@ -7,5 +7,6 @@ members = [
     "servers/batched-fn-server",
     "servers/actix-with-batching-server",
     "servers/ort-superserve-server",
+    "servers/ort-superserve-8-sessions-server",
     "bench-client",
 ]

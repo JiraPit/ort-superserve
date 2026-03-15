@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Download MobileNetV2 model and test data, convert to PNG format."""
+"""Download ResNet50 model and test data, convert to PNG format."""
 
 import argparse
 import zlib
@@ -7,7 +7,7 @@ import urllib.request
 import tarfile
 from pathlib import Path
 
-MODEL_URL = "https://github.com/onnx/models/raw/main/validated/vision/classification/mobilenet/model/mobilenetv2-12-int8.tar.gz"
+MODEL_URL = "https://github.com/onnx/models/raw/main/validated/vision/classification/resnet/model/resnet50-v1-12-int8.tar.gz"
 
 
 def download_file(url: str, dest: Path):
@@ -73,7 +73,7 @@ def create_png_rgb(width: int, height: int, pixels: bytes) -> bytes:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Download MobileNetV2 model and generate test images"
+        description="Download ResNet50 model and generate test images"
     )
     parser.add_argument(
         "--data-dir",
@@ -91,8 +91,8 @@ def main():
 
     data_dir = args.data_dir
     images_dir = data_dir / "images"
-    model_path = data_dir / "mobilenetv2-12-int8.onnx"
-    tar_path = data_dir / "mobilenetv2.tar.gz"
+    model_path = data_dir / "resnet50-v1-12-int8.onnx"
+    tar_path = data_dir / "resnet50.tar.gz"
 
     data_dir.mkdir(parents=True, exist_ok=True)
 
@@ -104,7 +104,7 @@ def main():
         with tarfile.open(tar_path, "r:gz") as tar:
             for member in tar.getmembers():
                 if member.name.endswith(".onnx"):
-                    member.name = "mobilenetv2-12-int8.onnx"
+                    member.name = "resnet50-v1-12-int8.onnx"
                     tar.extract(member, data_dir)
         print(f"Model extracted to {model_path}")
 

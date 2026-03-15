@@ -34,8 +34,8 @@ impl BatcherTask {
     ///
     /// A `JoinHandle` for the spawned task.
     pub fn spawn<I: Input, O: Output>(
-        mut command_rx: tokio::sync::mpsc::UnboundedReceiver<Command<I, O>>,
-        worker_txs: Vec<tokio::sync::mpsc::UnboundedSender<WorkerMessage>>,
+        command_rx: kanal::AsyncReceiver<Command<I, O>>,
+        worker_txs: Vec<kanal::AsyncSender<WorkerMessage>>,
         config: Arc<ServerConfig>,
         input_name: Arc<str>,
         output_name: Arc<str>,
@@ -46,22 +46,20 @@ impl BatcherTask {
             let mut dispatch_index: usize = 0;
 
             loop {
-                // Wait for first command
                 let first_cmd = match command_rx.recv().await {
-                    Some(cmd) => cmd,
-                    None => break,
+                    Ok(cmd) => cmd,
+                    Err(_) => break,
                 };
                 batch_buffer.push(first_cmd);
 
-                // Collect more commands until batch is full or timeout
                 let sleep = tokio::time::sleep(config.max_wait_time);
                 tokio::pin!(sleep);
 
                 while batch_buffer.len() < config.max_batch_size {
                     tokio::select! {
                         cmd = command_rx.recv() => match cmd {
-                            Some(c) => batch_buffer.push(c),
-                            None => break,
+                            Ok(c) => batch_buffer.push(c),
+                            Err(_) => break,
                         },
                         () = &mut sleep => break,
                     }
@@ -178,7 +176,7 @@ impl BatcherTask {
                 let worker_idx = dispatch_index % num_workers;
                 dispatch_index = dispatch_index.wrapping_add(1);
 
-                if let Err(e) = worker_txs[worker_idx].send(worker_msg) {
+                if let Err(e) = worker_txs[worker_idx].send(worker_msg).await {
                     tracing::error!("Batcher: Failed to send to worker {worker_idx}: {e:#}");
                     for responder in responders {
                         let _ = responder.send(Err(anyhow::Error::msg("Worker unavailable")));

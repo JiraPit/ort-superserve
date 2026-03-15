@@ -1,5 +1,5 @@
 # Benchmark data (regenerate with: uv run download-data --data-dir ../data)
-data/mobilenetv2-12-int8.onnx
+data/*.onnx
 data/images/
 data/*.gz
 
