@@ -41,19 +41,19 @@ impl Input for MyInput {
 
 /// Output wrapper implementing the ort-superserve `Output` trait.
 struct MyOutput {
-    /// Predicted digit class.
-    digit: usize,
+    /// Predicted class_id class.
+    class_id: usize,
     /// Confidence score.
     confidence: f32,
 }
 
 impl Output for MyOutput {
-    /// Postprocesses raw logits into predicted digit and confidence.
+    /// Postprocesses raw logits into predicted class_id and confidence.
     async fn postprocess(raw: ArrayViewD<'_, f32>) -> Result<Self> {
         let logits: Vec<f32> = raw.iter().copied().collect();
         let output = ImageOutput::from_logits(&logits);
         Ok(MyOutput {
-            digit: output.digit,
+            class_id: output.class_id,
             confidence: output.confidence,
         })
     }
@@ -119,7 +119,7 @@ async fn infer_handler(
     let _elapsed = start.elapsed();
 
     Json(ImageOutput {
-        digit: output.digit,
+        class_id: output.class_id,
         confidence: output.confidence,
     })
 }

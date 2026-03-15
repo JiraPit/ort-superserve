@@ -39,7 +39,7 @@ mod base64 {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImageOutput {
     /// Predicted class index (0-999 for ImageNet).
-    pub digit: usize,
+    pub class_id: usize,
     /// Confidence score derived from softmax probabilities.
     pub confidence: f32,
 }
@@ -129,7 +129,7 @@ impl ImageOutput {
         let confidence = 1.0 / exp_sum;
 
         Self {
-            digit: max_idx,
+            class_id: max_idx,
             confidence,
         }
     }
@@ -144,7 +144,7 @@ impl ImageOutput {
             .unwrap_or(0);
 
         Self {
-            digit: max_idx,
+            class_id: max_idx,
             confidence: probs[max_idx],
         }
     }

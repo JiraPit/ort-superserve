@@ -216,7 +216,7 @@ async fn main() -> Result<()> {
                     Ok(resp) if resp.status().is_success() => {
                         match resp.json::<ImageOutput>().await {
                             Ok(output) => {
-                                println!("digit: {}, confidence: {:.4}", output.digit, output.confidence);
+                                println!("class_id: {}, confidence: {:.4}", output.class_id, output.confidence);
                             }
                             Err(e) => {
                                 eprintln!("Failed to parse response: {}", e);
