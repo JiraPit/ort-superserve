@@ -52,8 +52,8 @@ if [ -n "$HOST" ]; then
             --port $port \
             --output results/${server}.csv \
             --ramp-duration 60 \
-            --hold-duration 120 \
-            --max-concurrency 3000
+            --hold-duration 60 \
+            --max-concurrency 512
         
         sleep 2
     done
@@ -81,8 +81,8 @@ else
             --port $port \
             --output results/${server}.csv \
             --ramp-duration 60 \
-            --hold-duration 120 \
-            --max-concurrency 3000
+            --hold-duration 60 \
+            --max-concurrency 512
         
         # Stop server
         echo "Stopping $server..."
