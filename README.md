@@ -1,8 +1,8 @@
 # ort-superserve
 
-A "thin" asynchronous ONNX Runtime session orchestrator for high-throughput model serving.
+A "thin" asynchronous ONNX Runtime session orchestrator for high-throughput model serving. Designed for simplicity, flexibility, and performance.
 
-Orchestrates a pool of ONNX sessions with dynamic batching and parallel processing, enabling thousands of concurrent requests to share the same model without mutex contention on the hot path. Designed for simplicity, flexibility, and performance.
+Orchestrates a pool of ONNX sessions with dynamic batching and parallel processing, enabling thousands of concurrent requests to share the same model without mutex contention on the hot path.
 
 ## Architecture
 
