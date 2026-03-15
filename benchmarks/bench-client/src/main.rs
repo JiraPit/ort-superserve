@@ -20,6 +20,10 @@ struct Args {
     #[arg(short, long, default_value = "3001")]
     port: u16,
 
+    /// Server host (default: localhost)
+    #[arg(long, default_value = "localhost")]
+    host: String,
+
     /// Output CSV file
     #[arg(short, long, default_value = "results/default.csv")]
     output: PathBuf,
@@ -69,13 +73,10 @@ struct Sample {
 async fn main() -> Result<()> {
     let args = Args::parse();
 
-    println!("Server: {}", args.server);
-    println!("Port: {}", args.port);
+    println!("Server: {}:{}", args.host, args.port);
     println!("Ramp duration: {}s", args.ramp_duration);
-    println!("Hold duration: {}s", args.hold_duration);
-    println!("Max concurrency: {}", args.max_concurrency);
 
-    let base_url = format!("http://localhost:{}", args.port);
+    let base_url = format!("http://{}:{}", args.host, args.port);
     let health_url = format!("{}/health", base_url);
     let infer_url = format!("{}/infer", base_url);
 

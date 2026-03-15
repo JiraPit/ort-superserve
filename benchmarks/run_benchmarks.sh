@@ -3,6 +3,10 @@ set -e
 
 cd "$(dirname "$0")"
 
+# Optional: specify remote host to benchmark against (e.g., 192.168.1.100)
+# If not set, will build and run local servers
+HOST="${1:-}"
+
 # Download data if needed
 if [ ! -f "data/resnet50-v1-12-int8.onnx" ] || [ ! -d "data/images" ]; then
     echo "Downloading ResNet50 data..."
@@ -28,40 +32,67 @@ declare -A PORTS=(
 # Create results directory
 mkdir -p results
 
-# Run benchmarks
-for server in ort-superserve ort-superserve-8-sessions actix-with-batching actix-without-batching arc-mutex batched-fn; do
-    port=${PORTS[$server]}
-    echo ""
+# Determine if benchmarking remote host or local servers
+if [ -n "$HOST" ]; then
     echo "================================================"
-    echo "Benchmarking $server on port $port"
+    echo "Benchmarking REMOTE host: $HOST"
     echo "================================================"
     
-    # Start server
-    echo "Starting $server..."
-    cargo run --release --bin ${server}-server &
-    SERVER_PID=$!
-    
-    # Wait for warmup
-    sleep 5
-    
-    # Run benchmark
-    echo "Running benchmark..."
-    cargo run --release --bin bench-client -- \
-        --server $server \
-        --port $port \
-        --output results/${server}.csv \
-        --ramp-duration 60 \
-        --hold-duration 120 \
-        --max-concurrency 3000
-    
-    # Stop server
-    echo "Stopping $server..."
-    kill $SERVER_PID 2>/dev/null || true
-    wait $SERVER_PID 2>/dev/null || true
-    
-    echo "Benchmark for $server complete"
-    sleep 2
-done
+    for server in ort-superserve ort-superserve-8-sessions actix-with-batching actix-without-batching arc-mutex batched-fn; do
+        port=${PORTS[$server]}
+        echo ""
+        echo "================================================"
+        echo "Benchmarking $server on $HOST:$port"
+        echo "================================================"
+        
+        # Run benchmark against remote
+        cargo run --release --bin bench-client -- \
+            --server $server \
+            --host $HOST \
+            --port $port \
+            --output results/${server}.csv \
+            --ramp-duration 60 \
+            --hold-duration 120 \
+            --max-concurrency 3000
+        
+        sleep 2
+    done
+else
+    # Run benchmarks on local servers
+    for server in ort-superserve ort-superserve-8-sessions actix-with-batching actix-without-batching arc-mutex batched-fn; do
+        port=${PORTS[$server]}
+        echo ""
+        echo "================================================"
+        echo "Benchmarking $server on port $port"
+        echo "================================================"
+        
+        # Start server
+        echo "Starting $server..."
+        cargo run --release --bin ${server}-server &
+        SERVER_PID=$!
+        
+        # Wait for warmup
+        sleep 5
+        
+        # Run benchmark
+        echo "Running benchmark..."
+        cargo run --release --bin bench-client -- \
+            --server $server \
+            --port $port \
+            --output results/${server}.csv \
+            --ramp-duration 60 \
+            --hold-duration 120 \
+            --max-concurrency 3000
+        
+        # Stop server
+        echo "Stopping $server..."
+        kill $SERVER_PID 2>/dev/null || true
+        wait $SERVER_PID 2>/dev/null || true
+        
+        echo "Benchmark for $server complete"
+        sleep 2
+    done
+fi
 
 echo ""
 echo "================================================"
