@@ -1,10 +1,10 @@
 //! Audio preprocessing example showing how to process WAV files for ONNX models.
 //!
 //! This demonstrates:
-//! - Loading WAV files in the preprocess step
-//! - Converting stereo to mono
-//! - Resampling to target sample rate
-//! - Normalizing to fixed length
+//! - Loading WAV files (simulating server upload) in constructor
+//! - Converting stereo to mono in preprocess step
+//! - Resampling to target sample rate in preprocess step
+//! - Normalizing to fixed length in preprocess step
 //! - Wrapping all CPU-bound work in `spawn_blocking`
 
 use anyhow::Result;
@@ -12,15 +12,39 @@ use ndarray::{Array1, ArrayD, ArrayViewD, Axis};
 use ort_superserve::{Input, Output, Server, ServerConfig};
 use std::path::PathBuf;
 
-/// Input type that holds the path to a WAV file.
-/// All preprocessing happens in the `Input::preprocess` method.
+/// Raw audio samples loaded from WAV file.
+/// In a real server, this simulates receiving raw audio bytes from an upload.
 struct AudioInput {
-    path: PathBuf,
+    samples: Vec<f32>,
+    sample_rate: u32,
+    channels: u16,
 }
 
 impl AudioInput {
-    fn from_path(path: PathBuf) -> Self {
-        Self { path }
+    /// Load audio from a WAV file.
+    /// In a real server, this simulates receiving raw audio bytes from an upload.
+    fn from_wav(path: PathBuf) -> Result<Self> {
+        let reader = hound::WavReader::open(&path)?;
+        let spec = reader.spec();
+
+        let samples: Vec<f32> = match spec.sample_format {
+            hound::SampleFormat::Float => {
+                reader.into_samples::<f32>().map(|s| s.unwrap()).collect()
+            }
+            hound::SampleFormat::Int => {
+                let max_val = (1 << (spec.bits_per_sample - 1)) as f32;
+                reader
+                    .into_samples::<i32>()
+                    .map(|s| s.unwrap() as f32 / max_val)
+                    .collect()
+            }
+        };
+
+        Ok(AudioInput {
+            samples,
+            sample_rate: spec.sample_rate,
+            channels: spec.channels,
+        })
     }
 }
 
@@ -37,37 +61,19 @@ impl Input for AudioInput {
             let target_sample_rate = 16000;
             let target_length = 16000;
 
-            // Load WAV file
-            let reader = hound::WavReader::open(&self.path)?;
-            let spec = reader.spec();
-
-            // Decode samples to f32
-            let samples: Vec<f32> = match spec.sample_format {
-                hound::SampleFormat::Float => {
-                    reader.into_samples::<f32>().map(|s| s.unwrap()).collect()
-                }
-                hound::SampleFormat::Int => {
-                    let max_val = (1 << (spec.bits_per_sample - 1)) as f32;
-                    reader
-                        .into_samples::<i32>()
-                        .map(|s| s.unwrap() as f32 / max_val)
-                        .collect()
-                }
-            };
-
             // Convert stereo to mono
-            let mono_samples = if spec.channels == 2 {
-                samples
+            let mono_samples = if self.channels == 2 {
+                self.samples
                     .chunks_exact(2)
                     .map(|chunk| (chunk[0] + chunk[1]) / 2.0)
                     .collect()
             } else {
-                samples
+                self.samples
             };
 
             // Resample to target rate
-            let resampled = if spec.sample_rate != target_sample_rate {
-                resample_linear(&mono_samples, spec.sample_rate, target_sample_rate)
+            let resampled = if self.sample_rate != target_sample_rate {
+                resample_linear(&mono_samples, self.sample_rate, target_sample_rate)
             } else {
                 mono_samples
             };
@@ -153,9 +159,12 @@ async fn main() -> Result<()> {
     let server = Server::<AudioInput, AudioOutput>::from_file(model_path, config).await?;
 
     println!("Server initialized successfully!");
-    println!("Processing audio from {:?}...", audio_path);
+    println!("Loading audio from {:?}...", audio_path);
 
-    let input = AudioInput::from_path(audio_path);
+    // Load raw audio (simulating server upload receiving bytes)
+    let input = AudioInput::from_wav(audio_path)?;
+
+    println!("Running inference...");
 
     let result = server.infer(input).await?;
 
