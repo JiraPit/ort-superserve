@@ -185,7 +185,7 @@ impl<I: Input, O: Output> Server<I, O> {
         Self::start(model_path_str, config, input_name, output_name)
     }
 
-/// Start the server with the given configuration.
+    /// Start the server with the given configuration.
     ///
     /// Spawns worker threads for ONNX sessions and a batcher task for
     /// collecting and dispatching requests.

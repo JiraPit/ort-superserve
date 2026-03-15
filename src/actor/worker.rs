@@ -98,7 +98,7 @@ impl WorkerTask {
         // Create input map
         let inputs: SessionInputs = SessionInputs::ValueMap(vec![(
             std::borrow::Cow::Borrowed(&input_name),
-            SessionInputValue::Owned(input_value.into()),
+            SessionInputValue::from(input_value),
         )]);
 
         // Run inference
