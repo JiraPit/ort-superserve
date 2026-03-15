@@ -1,9 +1,18 @@
+//! Benchmark server using Actix actors with manual batching implementation.
+//!
+//! This implementation demonstrates the complexity of implementing dynamic
+//! batching manually using Actix actors. Two actors are used:
+//! - BatcherActor: Collects requests and dispatches batches
+//! - WorkerActor: Runs inference on batched inputs
+//!
+//! Requires significantly more code than ort-superserve for equivalent functionality.
+
 use actix::{Actor, Addr, AsyncContext, Handler, Message, SyncArbiter, SyncContext};
 use anyhow::Result;
-use axum::{Json, Router, extract::State, routing::post};
+use axum::{extract::State, routing::post, Json, Router};
 use ndarray::ArrayD;
 use ort::{
-    session::{Session, SessionInputValue, SessionInputs, builder::GraphOptimizationLevel},
+    session::{builder::GraphOptimizationLevel, Session, SessionInputValue, SessionInputs},
     value::Value,
 };
 use shared::{MnistInput, MnistOutput};
@@ -12,9 +21,12 @@ use tokio::sync::oneshot;
 use tokio::time::Duration;
 use tower_http::cors::CorsLayer;
 
+/// Maximum number of requests to batch together.
 const MAX_BATCH_SIZE: usize = 32;
+/// Maximum time to wait for a full batch (milliseconds).
 const MAX_WAIT_MS: u64 = 10;
 
+/// Worker actor that owns the ONNX session and processes batched inference.
 struct WorkerActor {
     session: Session,
 }
@@ -24,6 +36,7 @@ impl Actor for WorkerActor {
 }
 
 impl WorkerActor {
+    /// Creates a new worker actor with the given model.
     fn new(model_path: &PathBuf) -> Result<Self> {
         let session = Session::builder()
             .map_err(|e| anyhow::Error::msg(e.to_string()))?
@@ -37,8 +50,11 @@ impl WorkerActor {
     }
 }
 
+/// Message containing a batch of preprocessed inputs for inference.
 struct BatchInferMessage {
+    /// Batched input tensors.
     batch: Vec<ArrayD<f32>>,
+    /// Response channels for each batch item.
     result_txs: Vec<oneshot::Sender<Vec<f64>>>,
 }
 
@@ -49,6 +65,7 @@ impl Message for BatchInferMessage {
 impl Handler<BatchInferMessage> for WorkerActor {
     type Result = ();
 
+    /// Runs inference on the batched inputs and sends results to each caller.
     fn handle(&mut self, msg: BatchInferMessage, _ctx: &mut Self::Context) {
         let batch_size = msg.batch.len();
         if batch_size == 0 {
@@ -128,11 +145,17 @@ impl Handler<BatchInferMessage> for WorkerActor {
     }
 }
 
+/// Batcher actor that collects requests and dispatches batches to the worker.
 struct BatcherActor {
+    /// Address of the worker actor.
     worker: Addr<WorkerActor>,
+    /// Accumulated batch inputs.
     batch: Vec<ArrayD<f32>>,
+    /// Response channels for pending requests.
     result_txs: Vec<oneshot::Sender<Vec<f64>>>,
+    /// Maximum batch size before forced dispatch.
     max_batch_size: usize,
+    /// Maximum time to wait for more requests.
     max_wait: Duration,
 }
 
@@ -140,9 +163,11 @@ impl Actor for BatcherActor {
     type Context = actix::Context<Self>;
 }
 
+/// Message containing a single inference request.
 struct InferMessage {
     input_array: ArrayD<f32>,
 }
+
 impl Message for InferMessage {
     type Result = Result<Vec<f64>, anyhow::Error>;
 }
@@ -150,6 +175,7 @@ impl Message for InferMessage {
 impl Handler<InferMessage> for BatcherActor {
     type Result = actix::Response<Result<Vec<f64>, anyhow::Error>>;
 
+    /// Adds the request to the current batch and dispatches if full or timeout.
     fn handle(&mut self, msg: InferMessage, ctx: &mut Self::Context) -> Self::Result {
         let (tx, rx) = oneshot::channel();
         self.batch.push(msg.input_array);
@@ -163,13 +189,12 @@ impl Handler<InferMessage> for BatcherActor {
             });
         }
 
-        actix::Response::fut(
-            async move { rx.await.map_err(|_| anyhow::Error::msg("Channel closed")) },
-        )
+        actix::Response::fut(async move { rx.await.map_err(|_| anyhow::Error::msg("Channel closed")) })
     }
 }
 
 impl BatcherActor {
+    /// Dispatches the current batch to the worker actor.
     fn dispatch_batch(&mut self) {
         if self.batch.is_empty() {
             return;
@@ -185,6 +210,7 @@ impl BatcherActor {
     }
 }
 
+/// Application state containing the batcher actor address.
 struct AppState {
     batcher: Addr<BatcherActor>,
 }
@@ -227,6 +253,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+/// Handles inference requests by preprocessing and sending to the batcher.
 async fn infer_handler(
     State(state): State<Arc<AppState>>,
     Json(input): Json<MnistInput>,

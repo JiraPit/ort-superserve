@@ -126,6 +126,38 @@ Uses MNIST-12 ONNX model from the ONNX Model Zoo:
 - Input: `[batch_size, 1, 28, 28]` - Grayscale images
 - Output: `[batch_size, 10]` - Class logits
 
+## Lines of Code (LOC) Comparison
+
+Run the counting script:
+
+```bash
+./count_loc.sh
+```
+
+### Results
+
+**Server-specific code only** (excludes shared library used by all):
+
+| Server | Lines of Code |
+|--------|---------------|
+| `arc-mutex-server` | 68 |
+| `ort-superserve-server` | 82 |
+| `actix-without-batching-server` | 94 |
+| `batched-fn-server` | 136 |
+| `actix-with-batching-server` | 209 |
+
+**Total including shared library** (247 lines):
+
+| Server | Total Lines |
+|--------|-------------|
+| `arc-mutex-server` | 315 |
+| `ort-superserve-server` | 329 |
+| `actix-without-batching-server` | 341 |
+| `batched-fn-server` | 383 |
+| `actix-with-batching-server` | 456 |
+
+The naive `Arc<Mutex<Session>>` approach requires the least code (68 lines), but provides no batching and poor throughput under load. `ort-superserve` achieves production-grade batching and parallelism with only 14 additional lines compared to the naive baseline. In contrast, manually implementing batching with actix actors requires 209 lines—2.5x more code than ort-superserve.
+
 ## License
 
 MIT

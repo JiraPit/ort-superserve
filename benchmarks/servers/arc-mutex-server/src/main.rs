@@ -1,7 +1,13 @@
+//! Benchmark server using naive Arc<Mutex<Session>> approach.
+//!
+//! This implementation represents the simplest but least scalable approach
+//! to ONNX session management. A single session is wrapped in a mutex,
+/// creating contention under concurrent load.
+
 use anyhow::Result;
-use axum::{Json, Router, extract::State, routing::post};
+use axum::{extract::State, routing::post, Json, Router};
 use ort::{
-    session::{Session, SessionInputValue, SessionInputs, builder::GraphOptimizationLevel},
+    session::{builder::GraphOptimizationLevel, Session, SessionInputValue, SessionInputs},
     value::Value,
 };
 use shared::{MnistInput, MnistOutput};
@@ -9,6 +15,7 @@ use std::{path::PathBuf, sync::Arc, time::Instant};
 use tokio::sync::Mutex;
 use tower_http::cors::CorsLayer;
 
+/// Application state containing the mutex-protected ONNX session.
 struct AppState {
     session: Arc<Mutex<Session>>,
 }
@@ -49,20 +56,22 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+/// Handles inference requests with mutex-locked session access.
+///
+/// Preprocessing and postprocessing run sequentially within each request.
+/// The mutex is held for the entire duration of inference, blocking
+/// other concurrent requests.
 async fn infer_handler(
     State(state): State<Arc<AppState>>,
     Json(input): Json<MnistInput>,
 ) -> Json<MnistOutput> {
     let start = Instant::now();
 
-    // Preprocessing (sequential)
     let input_array = input.to_input_array().expect("Failed to process image");
 
-    // Acquire lock and run inference
     let logits = {
         let mut session = state.session.lock().await;
 
-        // Create input tensor
         let input_value =
             Value::from_array(input_array.clone()).expect("Failed to create input tensor");
 
@@ -71,20 +80,16 @@ async fn infer_handler(
             SessionInputValue::Owned(input_value.into()),
         )]);
 
-        // Run inference
         let outputs = session.run(inputs).expect("Inference failed");
 
-        // Extract output
         let output_tensor = outputs.get("Plus214_Output_0").expect("Output not found");
         let (_shape, data) = output_tensor
             .try_extract_tensor::<f32>()
             .expect("Failed to extract tensor");
 
-        // Copy data while holding the lock
         data.to_vec()
     };
 
-    // Postprocessing (sequential)
     let output = MnistOutput::from_logits(&logits);
 
     let elapsed = start.elapsed();

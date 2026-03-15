@@ -1,10 +1,16 @@
+//! Benchmark server using the batched-fn crate for transparent batching.
+//!
+//! This implementation uses the `batched-fn` macro to automatically batch
+//! incoming requests. The batching logic is handled by the macro, reducing
+//! boilerplate compared to manual implementation.
+
 use anyhow::Result;
-use axum::{Json, Router, extract::State, routing::post};
+use axum::{extract::State, routing::post, Json, Router};
 use batched_fn::batched_fn;
 use ndarray::ArrayD;
 use once_cell::sync::Lazy;
 use ort::{
-    session::{Session, SessionInputValue, SessionInputs, builder::GraphOptimizationLevel},
+    session::{builder::GraphOptimizationLevel, Session, SessionInputValue, SessionInputs},
     value::Value,
 };
 use shared::{MnistInput, MnistOutput};
@@ -15,6 +21,7 @@ use std::{path::PathBuf, sync::Arc};
 use tokio::time::Instant as TokioInstant;
 use tower_http::cors::CorsLayer;
 
+/// Global ONNX session protected by a mutex.
 static SESSION: Lazy<Mutex<Session>> = Lazy::new(|| {
     let model_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -35,16 +42,22 @@ static SESSION: Lazy<Mutex<Session>> = Lazy::new(|| {
     Mutex::new(session)
 });
 
+/// Type alias for a batch of items.
 type Batch<T> = Vec<T>;
+/// Preprocessed input tensor type.
 type PreprocessedInput = ArrayD<f32>;
+/// Inference output type.
 type InferenceResult = Vec<f32>;
 
+/// Processes a batch of preprocessed inputs through the ONNX model.
+///
+/// This function stacks individual inputs into a batched tensor,
+/// runs inference, and splits the results back to individual outputs.
 fn predict_batch(batch: Batch<PreprocessedInput>) -> Batch<InferenceResult> {
     if batch.is_empty() {
         return Vec::new();
     }
 
-    // === STACK ARRAYS (no lock) ===
     let views: Vec<_> = batch.iter().map(|a| a.view()).collect();
     let batched = match ndarray::stack(ndarray::Axis(0), &views) {
         Ok(b) => b.into_dyn(),
@@ -65,7 +78,6 @@ fn predict_batch(batch: Batch<PreprocessedInput>) -> Batch<InferenceResult> {
         SessionInputValue::Owned(input_value.into()),
     )]);
 
-    // === INFERENCE (hold lock only here) ===
     let all_logits = {
         let mut session = SESSION.lock().unwrap();
         let outputs = match session.run(inputs) {
@@ -91,9 +103,7 @@ fn predict_batch(batch: Batch<PreprocessedInput>) -> Batch<InferenceResult> {
 
         data.to_vec()
     };
-    // === LOCK RELEASED ===
 
-    // === SPLIT LOGITS (no lock) ===
     let num_classes = 10;
     let mut results = Vec::with_capacity(batch.len());
     for i in 0..batch.len() {
@@ -104,16 +114,15 @@ fn predict_batch(batch: Batch<PreprocessedInput>) -> Batch<InferenceResult> {
     results
 }
 
+/// Type alias for the batched prediction function.
 type BatchPredictFn = Arc<
-    dyn Fn(
-            PreprocessedInput,
-        )
-            -> Pin<Box<dyn Future<Output = Result<InferenceResult, batched_fn::Error>> + Send>>
+    dyn Fn(PreprocessedInput) -> Pin<Box<dyn Future<Output = Result<InferenceResult, batched_fn::Error>> + Send>>
         + Send
         + Sync,
 >;
 type AppState = BatchPredictFn;
 
+/// Global batched prediction function created by the batched-fn macro.
 static BATCH_PREDICT: Lazy<AppState> = Lazy::new(|| {
     let batched = batched_fn! {
         handler = |batch: Batch<PreprocessedInput>, _ctx: &()| -> Batch<InferenceResult> {
@@ -151,21 +160,17 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+/// Handles inference requests by preprocessing and calling the batched function.
 async fn infer_handler(
     State(batch_predict): State<AppState>,
     Json(input): Json<MnistInput>,
 ) -> Json<MnistOutput> {
     let start = TokioInstant::now();
 
-    // === PREPROCESSING (parallel in handler) ===
     let input_array = input.to_input_array().expect("Failed to preprocess image");
 
-    // === BATCHED INFERENCE ===
-    let logits = batch_predict(input_array)
-        .await
-        .expect("Batched inference failed");
+    let logits = batch_predict(input_array).await.expect("Batched inference failed");
 
-    // === POSTPROCESSING (parallel in handler) ===
     let output = MnistOutput::from_logits(&logits);
 
     let elapsed = start.elapsed();

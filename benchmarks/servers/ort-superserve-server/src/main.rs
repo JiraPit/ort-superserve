@@ -1,37 +1,51 @@
+//! Benchmark server using the ort-superserve library.
+//!
+//! This implementation demonstrates the minimal code required to build a
+//! production-grade inference server with dynamic batching and parallel
+//! preprocessing/postprocessing.
+
 use std::{path::PathBuf, sync::Arc, time::Instant};
 use tokio::time::Duration;
 
 use anyhow::Result;
-use axum::{Json, Router, extract::State, routing::post};
+use axum::{extract::State, routing::post, Json, Router};
 use ndarray::{ArrayD, ArrayViewD};
 use ort::session::builder::GraphOptimizationLevel;
-use ort_superserve::{Input, Output, Server, ServerConfig, helpers::batch_array};
+use ort_superserve::{helpers::batch_array, Input, Output, Server, ServerConfig};
 use shared::{MnistInput, MnistOutput};
 use tower_http::cors::CorsLayer;
 
+/// Input wrapper implementing the ort-superserve `Input` trait.
 struct MyInput {
+    /// Raw PNG image bytes.
     image_bytes: Vec<u8>,
 }
 
 impl Input for MyInput {
     type Preprocessed = ArrayD<f32>;
 
+    /// Preprocesses the PNG bytes into a normalized tensor.
     async fn preprocess(self) -> Result<Self::Preprocessed> {
         let input = MnistInput::from_png_bytes(self.image_bytes);
         input.to_input_array()
     }
 
+    /// Stacks multiple preprocessed inputs into a batched tensor.
     fn batch(items: Vec<Self::Preprocessed>) -> Result<ArrayD<f32>> {
         batch_array(&items)
     }
 }
 
+/// Output wrapper implementing the ort-superserve `Output` trait.
 struct MyOutput {
+    /// Predicted digit class.
     digit: usize,
+    /// Confidence score.
     confidence: f32,
 }
 
 impl Output for MyOutput {
+    /// Postprocesses raw logits into predicted digit and confidence.
     async fn postprocess(raw: ArrayViewD<'_, f32>) -> Result<Self> {
         let logits: Vec<f32> = raw.iter().copied().collect();
         let output = MnistOutput::from_logits(&logits);
@@ -42,6 +56,7 @@ impl Output for MyOutput {
     }
 }
 
+/// Application state containing the ort-superserve server instance.
 struct AppState {
     server: Server<MyInput, MyOutput>,
 }
@@ -81,6 +96,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+/// Handles inference requests by delegating to the ort-superserve server.
 async fn infer_handler(
     State(state): State<Arc<AppState>>,
     Json(input): Json<MnistInput>,
@@ -91,11 +107,7 @@ async fn infer_handler(
         image_bytes: input.image_bytes,
     };
 
-    let output = state
-        .server
-        .infer(my_input)
-        .await
-        .expect("Inference failed");
+    let output = state.server.infer(my_input).await.expect("Inference failed");
 
     let elapsed = start.elapsed();
     println!("Request completed in {:?}", elapsed);

@@ -1,14 +1,21 @@
+//! Benchmark server using Actix actors without batching.
+//!
+//! This implementation uses actix SyncArbiter to run inference on a dedicated
+//! thread, avoiding async runtime blocking. Each request is processed
+//! individually without batching, making it simpler but less efficient under load.
+
 use actix::{Actor, Addr, Handler, Message, SyncArbiter, SyncContext};
 use anyhow::Result;
-use axum::{Json, Router, extract::State, routing::post};
+use axum::{extract::State, routing::post, Json, Router};
 use ort::{
-    session::{Session, SessionInputValue, SessionInputs, builder::GraphOptimizationLevel},
+    session::{builder::GraphOptimizationLevel, Session, SessionInputValue, SessionInputs},
     value::Value,
 };
 use shared::{MnistInput, MnistOutput};
 use std::{path::PathBuf, sync::Arc, time::Instant};
 use tower_http::cors::CorsLayer;
 
+/// Actor that owns the ONNX session and processes inference requests.
 struct InferenceActor {
     session: Session,
 }
@@ -18,6 +25,7 @@ impl Actor for InferenceActor {
 }
 
 impl InferenceActor {
+    /// Creates a new inference actor with the given model.
     fn new(model_path: &PathBuf) -> Result<Self> {
         let session = Session::builder()
             .map_err(|e| anyhow::Error::msg(e.to_string()))?
@@ -31,6 +39,7 @@ impl InferenceActor {
     }
 }
 
+/// Message containing preprocessed input for inference.
 struct InferMessage {
     input_array: ndarray::ArrayD<f32>,
 }
@@ -42,6 +51,7 @@ impl Message for InferMessage {
 impl Handler<InferMessage> for InferenceActor {
     type Result = Vec<f32>;
 
+    /// Runs inference on the input tensor and returns logits.
     fn handle(&mut self, msg: InferMessage, _ctx: &mut Self::Context) -> Self::Result {
         let input_value =
             Value::from_array(msg.input_array.clone()).expect("Failed to create input tensor");
@@ -62,6 +72,7 @@ impl Handler<InferMessage> for InferenceActor {
     }
 }
 
+/// Application state containing the inference actor address.
 struct AppState {
     actor: Addr<InferenceActor>,
 }
@@ -96,6 +107,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+/// Handles inference requests by sending to the actor and awaiting response.
 async fn infer_handler(
     State(state): State<Arc<AppState>>,
     Json(input): Json<MnistInput>,
