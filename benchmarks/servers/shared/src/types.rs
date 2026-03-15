@@ -15,7 +15,7 @@ pub struct ImageInput {
 
 /// Base64 serialization module for image bytes.
 mod base64 {
-    use base64::{Engine, engine::general_purpose::STANDARD};
+    use base64::{engine::general_purpose::STANDARD, Engine};
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
     pub fn serialize<S>(data: &Vec<u8>, serializer: S) -> Result<S::Ok, S::Error>
@@ -117,13 +117,6 @@ impl ImageOutput {
     /// Computes the softmax probability of the maximum logit
     /// as the confidence score.
     pub fn from_logits(logits: &[f32]) -> Self {
-        if logits.is_empty() {
-            return Self {
-                digit: 0,
-                confidence: 0.0,
-            };
-        }
-
         let max_idx = logits
             .iter()
             .enumerate()
@@ -143,13 +136,6 @@ impl ImageOutput {
 
     /// Creates output from pre-computed softmax probabilities.
     pub fn from_softmax_probs(probs: &[f32]) -> Self {
-        if probs.is_empty() {
-            return Self {
-                digit: 0,
-                confidence: 0.0,
-            };
-        }
-
         let max_idx = probs
             .iter()
             .enumerate()
