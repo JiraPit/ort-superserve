@@ -24,19 +24,6 @@ Orchestrates a pool of ONNX sessions with dynamic batching and parallel processi
 
 - **Parallel pre/post-processing**: Preprocessing and postprocessing run concurrently using `JoinSet`, pipelining CPU work while the GPU handles inference. This overlaps computation and hides latency, keeping the inference pipeline fully utilized.
 
-## Installation
-
-```toml
-[dependencies]
-ort-superserve = "0.1"
-
-[features]
-cuda = ["ort-superserve/cuda"]
-tensorrt = ["ort-superserve/tensorrt"]
-xnnpack = ["ort-superserve/xnnpack"]
-coreml = ["ort-superserve/coreml"]
-```
-
 ## Quick Start
 
 ```rust
