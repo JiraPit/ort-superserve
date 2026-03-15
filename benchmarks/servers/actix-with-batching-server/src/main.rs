@@ -94,7 +94,7 @@ impl Handler<BatchInferMessage> for WorkerActor {
         };
 
         let inputs: SessionInputs = SessionInputs::ValueMap(vec![(
-            std::borrow::Cow::Borrowed("Input3"),
+            std::borrow::Cow::Borrowed("input"),
             SessionInputValue::Owned(input_value.into()),
         )]);
 
@@ -108,7 +108,7 @@ impl Handler<BatchInferMessage> for WorkerActor {
             }
         };
 
-        let output_tensor = match outputs.get("Plus214_Output_0") {
+        let output_tensor = match outputs.get("output") {
             Some(t) => t,
             None => {
                 for tx in msg.result_txs {
@@ -222,7 +222,7 @@ async fn main() -> Result<()> {
         .unwrap()
         .parent()
         .unwrap()
-        .join("data/mnist-12.onnx");
+        .join("data/mobilenetv2-12-int8.onnx");
 
     let model_path_clone = model_path.clone();
     let worker = SyncArbiter::start(1, move || {

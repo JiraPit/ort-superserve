@@ -27,7 +27,7 @@ async fn main() -> Result<()> {
         .unwrap()
         .parent()
         .unwrap()
-        .join("data/mnist-12.onnx");
+        .join("data/mobilenetv2-12-int8.onnx");
 
     let session = Session::builder()
         .map_err(|e| anyhow::Error::msg(e.to_string()))?
@@ -76,13 +76,13 @@ async fn infer_handler(
             Value::from_array(input_array.clone()).expect("Failed to create input tensor");
 
         let inputs: SessionInputs = SessionInputs::ValueMap(vec![(
-            std::borrow::Cow::Borrowed("Input3"),
+            std::borrow::Cow::Borrowed("input"),
             SessionInputValue::Owned(input_value.into()),
         )]);
 
         let outputs = session.run(inputs).expect("Inference failed");
 
-        let output_tensor = outputs.get("Plus214_Output_0").expect("Output not found");
+        let output_tensor = outputs.get("output").expect("Output not found");
         let (_shape, data) = output_tensor
             .try_extract_tensor::<f32>()
             .expect("Failed to extract tensor");

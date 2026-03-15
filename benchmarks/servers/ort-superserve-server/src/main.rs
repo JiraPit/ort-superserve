@@ -68,7 +68,7 @@ async fn main() -> Result<()> {
         .unwrap()
         .parent()
         .unwrap()
-        .join("data/mnist-12.onnx");
+        .join("data/mobilenetv2-12-int8.onnx");
 
     let config = ServerConfig::new()
         .with_num_sessions(1)

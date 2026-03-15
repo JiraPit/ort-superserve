@@ -1,5 +1,5 @@
 # Benchmark data (regenerate with: python3 download_data.py)
-data/mnist-12.onnx
+data/mobilenetv2-12-int8.onnx
 data/images/
 data/*.gz
 

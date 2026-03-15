@@ -57,13 +57,13 @@ impl Handler<InferMessage> for InferenceActor {
             Value::from_array(msg.input_array.clone()).expect("Failed to create input tensor");
 
         let inputs: SessionInputs = SessionInputs::ValueMap(vec![(
-            std::borrow::Cow::Borrowed("Input3"),
+            std::borrow::Cow::Borrowed("input"),
             SessionInputValue::Owned(input_value.into()),
         )]);
 
         let outputs = self.session.run(inputs).expect("Inference failed");
 
-        let output_tensor = outputs.get("Plus214_Output_0").expect("Output not found");
+        let output_tensor = outputs.get("output").expect("Output not found");
         let (_shape, data) = output_tensor
             .try_extract_tensor::<f32>()
             .expect("Failed to extract tensor");
@@ -84,7 +84,7 @@ async fn main() -> Result<()> {
         .unwrap()
         .parent()
         .unwrap()
-        .join("data/mnist-12.onnx");
+        .join("data/mobilenetv2-12-int8.onnx");
 
     let model_path_clone = model_path.clone();
     let actor = SyncArbiter::start(1, move || {

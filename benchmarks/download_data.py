@@ -1,19 +1,12 @@
 #!/usr/bin/env python3
-"""Download MNIST model and test images, convert to PNG format."""
+"""Download MobileNetV2 model and test data, convert to PNG format."""
 
 import os
 import urllib.request
-import gzip
-import struct
+import tarfile
 from pathlib import Path
 
-MODEL_URL = "https://github.com/onnx/models/raw/main/validated/vision/classification/mnist/model/mnist-12.onnx"
-TEST_IMAGES_URL = (
-    "https://ossci-datasets.s3.amazonaws.com/mnist/t10k-images-idx3-ubyte.gz"
-)
-TEST_LABELS_URL = (
-    "https://ossci-datasets.s3.amazonaws.com/mnist/t10k-labels-idx1-ubyte.gz"
-)
+MODEL_URL = "https://github.com/onnx/models/raw/main/validated/vision/classification/mobilenet/model/mobilenetv2-12-int8.tar.gz"
 
 
 def download_file(url: str, dest: Path):
@@ -23,132 +16,97 @@ def download_file(url: str, dest: Path):
     print(f"Saved to {dest}")
 
 
-def read_mnist_images(filepath: Path):
-    """Read MNIST image file and return list of (image, label) tuples."""
-    with gzip.open(filepath, "rb") as f:
-        magic, num_images, rows, cols = struct.unpack(">IIII", f.read(16))
-        if magic != 2051:
-            raise ValueError(f"Invalid MNIST images file: magic={magic}")
-
-        images = []
-        for _ in range(num_images):
-            img = f.read(rows * cols)
-            images.append((rows, cols, img))
-        return images
-
-
-def read_mnist_labels(filepath: Path):
-    """Read MNIST label file and return list of labels."""
-    with gzip.open(filepath, "rb") as f:
-        magic, num_labels = struct.unpack(">II", f.read(8))
-        if magic != 2049:
-            raise ValueError(f"Invalid MNIST labels file: magic={magic}")
-        return list(f.read(num_labels))
-
-
-def save_as_png(images_dir: Path, images_data: list, labels: list):
-    """Save MNIST images as PNG files."""
-    import array
+def create_sample_images(images_dir: Path, count: int = 100):
+    """Create sample PNG images for testing (random noise as placeholder)."""
+    import zlib
+    import random
 
     images_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"Saving {len(images_data)} images as PNG...")
+    print(f"Creating {count} sample images...")
 
-    for idx, ((rows, cols, img_data), label) in enumerate(zip(images_data, labels)):
-        img_array = array.array("B", img_data)
+    for idx in range(count):
+        # Create a 224x224 RGB PNG image
+        width, height = 224, 224
+        pixels = bytes([random.randint(0, 255) for _ in range(width * height * 3)])
 
-        png = create_png(rows, cols, img_array)
+        png = create_png_rgb(width, height, pixels)
 
         filepath = images_dir / f"{idx}.png"
         with open(filepath, "wb") as f:
             f.write(png)
 
-        if (idx + 1) % 1000 == 0:
-            print(f"  Saved {idx + 1}/{len(images_data)} images")
+        if (idx + 1) % 100 == 0:
+            print(f"  Created {idx + 1}/{count} images")
 
-    print(f"Saved all {len(images_data)} images to {images_dir}")
+    print(f"Created all {count} images in {images_dir}")
 
 
-def create_png(width: int, height: int, pixels):
-    """Create a grayscale PNG image from raw pixel data."""
-    import zlib
+def create_png_rgb(width: int, height: int, pixels: bytes) -> bytes:
+    """Create an RGB PNG image from raw pixel data."""
 
     def png_chunk(chunk_type: bytes, data: bytes) -> bytes:
         chunk = chunk_type + data
         crc = zlib.crc32(chunk) & 0xFFFFFFFF
         return len(data).to_bytes(4, "big") + chunk + crc.to_bytes(4, "big")
 
-    # PNG signature
     signature = b"\x89PNG\r\n\x1a\n"
 
-    # IHDR chunk
     ihdr_data = (
-        width.to_bytes(4, "big") + height.to_bytes(4, "big") + b"\x08"  # bit depth = 8
-        b"\x00"  # color type = grayscale
-        b"\x00"  # compression = deflate
-        b"\x00"  # filter = adaptive
-        b"\x00"  # interlace = none
+        width.to_bytes(4, "big") + height.to_bytes(4, "big") + b"\x08\x02\x00\x00\x00"
     )
     ihdr = png_chunk(b"IHDR", ihdr_data)
 
-    # IDAT chunk (image data)
     raw_data = b""
     for y in range(height):
-        raw_data += b"\x00"  # filter type: none
+        raw_data += b"\x00"
         for x in range(width):
-            raw_data += bytes([pixels[y * width + x]])
+            offset = (y * width + x) * 3
+            raw_data += pixels[offset : offset + 3]
 
     compressed = zlib.compress(raw_data)
     idat = png_chunk(b"IDAT", compressed)
 
-    # IEND chunk
     iend = png_chunk(b"IEND", b"")
 
     return signature + ihdr + idat + iend
 
 
 def main():
-    # Paths
     script_dir = Path(__file__).parent
     data_dir = script_dir / "data"
     images_dir = data_dir / "images"
+    model_path = data_dir / "mobilenetv2-12-int8.onnx"
+    tar_path = data_dir / "mobilenetv2.tar.gz"
 
-    model_path = data_dir / "mnist-12.onnx"
-    images_gz = data_dir / "t10k-images-idx3-ubyte.gz"
-    labels_gz = data_dir / "t10k-labels-idx1-ubyte.gz"
-
-    # Create data directory
     data_dir.mkdir(parents=True, exist_ok=True)
 
-    # Download model
     if not model_path.exists():
-        download_file(MODEL_URL, model_path)
+        if not tar_path.exists():
+            download_file(MODEL_URL, tar_path)
+
+        print("Extracting model...")
+        with tarfile.open(tar_path, "r:gz") as tar:
+            for member in tar.getmembers():
+                if member.name.endswith(".onnx"):
+                    member.name = "mobilenetv2-12-int8.onnx"
+                    tar.extract(member, data_dir)
+        print(f"Model extracted to {model_path}")
+
+        tar_path.unlink()
     else:
         print(f"Model already exists: {model_path}")
 
-    # Download test images and labels
-    if not images_gz.exists():
-        download_file(TEST_IMAGES_URL, images_gz)
+    if not images_dir.exists() or len(list(images_dir.glob("*.png"))) < 100:
+        create_sample_images(images_dir, count=1000)
     else:
-        print(f"Images already downloaded: {images_gz}")
-
-    if not labels_gz.exists():
-        download_file(TEST_LABELS_URL, labels_gz)
-    else:
-        print(f"Labels already downloaded: {labels_gz}")
-
-    # Convert to PNG
-    if not images_dir.exists() or len(list(images_dir.glob("*.png"))) < 1000:
-        print("Converting MNIST to PNG...")
-        images = read_mnist_images(images_gz)
-        labels = read_mnist_labels(labels_gz)
-        save_as_png(images_dir, images, labels)
-    else:
-        print(f"Images already converted: {images_dir}")
+        print(
+            f"Images already exist: {images_dir} ({len(list(images_dir.glob('*.png')))} files)"
+        )
 
     print("Done!")
     print(f"Model: {model_path}")
-    print(f"Images: {images_dir} ({len(list(images_dir.glob('*.png')))} PNG files)")
+    print(f"Images: {images_dir}")
 
 
 if __name__ == "__main__":

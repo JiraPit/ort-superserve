@@ -4,8 +4,8 @@ set -e
 cd "$(dirname "$0")"
 
 # Download data if needed
-if [ ! -f "data/mnist-12.onnx" ] || [ ! -d "data/images" ]; then
-    echo "Downloading MNIST data..."
+if [ ! -f "data/mobilenetv2-12-int8.onnx" ] || [ ! -d "data/images" ]; then
+    echo "Downloading MobileNetV2 data..."
     python3 download_data.py
 fi
 

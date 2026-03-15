@@ -28,7 +28,7 @@ static SESSION: Lazy<Mutex<Session>> = Lazy::new(|| {
         .unwrap()
         .parent()
         .unwrap()
-        .join("data/mnist-12.onnx");
+        .join("data/mobilenetv2-12-int8.onnx");
 
     let session = Session::builder()
         .expect("Failed to create builder")
@@ -62,19 +62,19 @@ fn predict_batch(batch: Batch<PreprocessedInput>) -> Batch<InferenceResult> {
     let batched = match ndarray::stack(ndarray::Axis(0), &views) {
         Ok(b) => b.into_dyn(),
         Err(_) => {
-            return vec![vec![0.0; 10]; batch.len()];
+            return vec![vec![0.0; 1000]; batch.len()];
         }
     };
 
     let input_value = match Value::from_array(batched) {
         Ok(v) => v,
         Err(_) => {
-            return vec![vec![0.0; 10]; batch.len()];
+            return vec![vec![0.0; 1000]; batch.len()];
         }
     };
 
     let inputs: SessionInputs = SessionInputs::ValueMap(vec![(
-        std::borrow::Cow::Borrowed("Input3"),
+        std::borrow::Cow::Borrowed("input"),
         SessionInputValue::Owned(input_value.into()),
     )]);
 
@@ -83,28 +83,28 @@ fn predict_batch(batch: Batch<PreprocessedInput>) -> Batch<InferenceResult> {
         let outputs = match session.run(inputs) {
             Ok(o) => o,
             Err(_) => {
-                return vec![vec![0.0; 10]; batch.len()];
+                return vec![vec![0.0; 1000]; batch.len()];
             }
         };
 
-        let output_tensor = match outputs.get("Plus214_Output_0") {
+        let output_tensor = match outputs.get("output") {
             Some(t) => t,
             None => {
-                return vec![vec![0.0; 10]; batch.len()];
+                return vec![vec![0.0; 1000]; batch.len()];
             }
         };
 
         let (_shape, data) = match output_tensor.try_extract_tensor::<f32>() {
             Ok((s, d)) => (s, d),
             Err(_) => {
-                return vec![vec![0.0; 10]; batch.len()];
+                return vec![vec![0.0; 1000]; batch.len()];
             }
         };
 
         data.to_vec()
     };
 
-    let num_classes = 10;
+    let num_classes = 1000;
     let mut results = Vec::with_capacity(batch.len());
     for i in 0..batch.len() {
         let start = i * num_classes;

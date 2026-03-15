@@ -1,7 +1,7 @@
-//! Shared types for MNIST image classification across benchmark servers.
+//! Shared types for MobileNetV2 image classification across benchmark servers.
 
 use anyhow::Result;
-use image::{ImageBuffer, Luma};
+use image::{ImageBuffer, Rgb};
 use ndarray::{Array1, ArrayD, IxDyn};
 use serde::{Deserialize, Serialize};
 
@@ -35,10 +35,10 @@ mod base64 {
     }
 }
 
-/// Output payload containing predicted digit and confidence score.
+/// Output payload containing predicted class and confidence score.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MnistOutput {
-    /// Predicted digit class (0-9).
+    /// Predicted class index (0-999 for ImageNet).
     pub digit: usize,
     /// Confidence score derived from softmax probabilities.
     pub confidence: f32,
@@ -56,28 +56,40 @@ impl MnistInput {
         Ok(Self { image_bytes: bytes })
     }
 
-    /// Decodes the PNG bytes into a grayscale image buffer.
-    pub fn decode(&self) -> Result<ImageBuffer<Luma<u8>, Vec<u8>>> {
+    /// Decodes the PNG bytes into an RGB image buffer resized to 224x224.
+    pub fn decode(&self) -> Result<ImageBuffer<Rgb<u8>, Vec<u8>>> {
         let img = image::load_from_memory(&self.image_bytes)?;
-        let gray = img.to_luma8();
-        Ok(gray)
+        let rgb = img.to_rgb8();
+
+        let resized =
+            image::imageops::resize(&rgb, 224, 224, image::imageops::FilterType::Triangle);
+
+        Ok(resized)
     }
 
     /// Converts the image into an ONNX-compatible input tensor.
     ///
-    /// Returns a tensor with shape [1, height, width] normalized to [0, 1].
-    /// When batched, this becomes [batch, 1, height, width].
+    /// Returns a tensor with shape [3, 224, 224] normalized to [0, 1].
+    /// When batched, this becomes [batch, 3, 224, 224].
     pub fn to_input_array(&self) -> Result<ArrayD<f32>> {
-        let gray = self.decode()?;
-        let (width, height) = gray.dimensions();
+        let rgb = self.decode()?;
+        let (width, height) = rgb.dimensions();
 
-        let mut data = Vec::with_capacity((width * height) as usize);
-        for pixel in gray.iter() {
-            data.push(*pixel as f32 / 255.0);
+        // MobileNetV2 expects NCHW format: [C, H, W]
+        // Channel-first layout: RRR...GGG...BBB
+        let mut data = Vec::with_capacity((width * height * 3) as usize);
+
+        for channel in 0..3 {
+            for y in 0..height as usize {
+                for x in 0..width as usize {
+                    let pixel = rgb.get_pixel(x as u32, y as u32);
+                    data.push(pixel.0[channel] as f32 / 255.0);
+                }
+            }
         }
 
         let arr = Array1::from_vec(data);
-        let arr = arr.into_shape_with_order(IxDyn(&[1, height as usize, width as usize]))?;
+        let arr = arr.into_shape_with_order(IxDyn(&[3, height as usize, width as usize]))?;
         Ok(arr)
     }
 }
