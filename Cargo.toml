@@ -1,5 +1,6 @@
 [package]
 name = "ort-superserve"
+authors = ["JiraPit"]
 version = "0.2.0"
 edition = "2024"
 
@@ -13,7 +14,7 @@ coreml = ["ort/coreml"]
 [dependencies]
 anyhow = "1.0.102"
 ndarray = "0.17.2"
-ort = { version = "2.0.0-rc.12", features = ["download-binaries"] }
+ort = { version = "2.0.0-rc.12" }
 reqwest = { version = "0.13.2", features = ["json"] }
 thiserror = "2.0.18"
 tokio = { version = "1.50.0", features = ["full", "sync"] }

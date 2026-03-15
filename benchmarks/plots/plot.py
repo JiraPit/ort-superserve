@@ -1,22 +1,34 @@
 #!/usr/bin/env python3
 """Plot benchmark results from CSV files."""
 
-import os
+import argparse
 import sys
 from pathlib import Path
 
-try:
-    import pandas as pd
-    import matplotlib.pyplot as plt
-except ImportError:
-    print("Installing required packages...")
-    os.system(f"{sys.executable} -m pip install pandas matplotlib")
-    import pandas as pd
-    import matplotlib.pyplot as plt
+import pandas as pd
+import matplotlib.pyplot as plt
 
 
 def main():
-    results_dir = Path(__file__).parent.parent / "results"
+    parser = argparse.ArgumentParser(
+        description="Plot benchmark results from CSV files"
+    )
+    parser.add_argument(
+        "--results-dir",
+        type=Path,
+        default=None,
+        help="Directory containing CSV results (default: ../results relative to script)",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=None,
+        help="Directory to save plots (default: same as results-dir)",
+    )
+    args = parser.parse_args()
+
+    results_dir = args.results_dir or (Path(__file__).parent.parent / "results")
+    output_dir = args.output_dir or results_dir
 
     if not results_dir.exists():
         print(f"Results directory not found: {results_dir}")
@@ -30,7 +42,6 @@ def main():
 
     print(f"Found {len(csv_files)} CSV files")
 
-    # Load all data
     data = {}
     for csv_file in csv_files:
         server_name = csv_file.stem
@@ -45,9 +56,6 @@ def main():
         print("No valid data loaded")
         sys.exit(1)
 
-    # Create latency plot
-    fig, ax = plt.subplots(figsize=(12, 8))
-
     colors = {
         "ort-superserve": "blue",
         "actix-with-batching": "green",
@@ -55,6 +63,10 @@ def main():
         "arc-mutex": "red",
         "batched-fn": "purple",
     }
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    fig, ax = plt.subplots(figsize=(12, 8))
 
     for server_name, df in sorted(data.items()):
         color = colors.get(server_name, "gray")
@@ -74,11 +86,10 @@ def main():
     ax.grid(True, alpha=0.3)
 
     plt.tight_layout()
-    latency_path = results_dir / "latency_comparison.png"
+    latency_path = output_dir / "latency_comparison.png"
     plt.savefig(latency_path, dpi=150)
     print(f"Saved: {latency_path}")
 
-    # Create throughput plot
     fig, ax = plt.subplots(figsize=(12, 8))
 
     for server_name, df in sorted(data.items()):
@@ -99,11 +110,10 @@ def main():
     ax.grid(True, alpha=0.3)
 
     plt.tight_layout()
-    throughput_path = results_dir / "throughput_comparison.png"
+    throughput_path = output_dir / "throughput_comparison.png"
     plt.savefig(throughput_path, dpi=150)
     print(f"Saved: {throughput_path}")
 
-    # Create summary table
     print("\n" + "=" * 80)
     print("BENCHMARK SUMMARY")
     print("=" * 80)
@@ -121,9 +131,7 @@ def main():
         print(f"{server_name:<25} {throughput:<20.2f} {p50:<20.2f} {p99:<20.2f}")
 
     print("=" * 80)
-    print(f"\nPlots saved to {results_dir}")
-
-    plt.show()
+    print(f"\nPlots saved to {output_dir}")
 
 
 if __name__ == "__main__":

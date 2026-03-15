@@ -6,7 +6,9 @@ cd "$(dirname "$0")"
 # Download data if needed
 if [ ! -f "data/mobilenetv2-12-int8.onnx" ] || [ ! -d "data/images" ]; then
     echo "Downloading MobileNetV2 data..."
-    python3 download_data.py
+    cd download_data
+    uv run download-data --data-dir ../data
+    cd ..
 fi
 
 # Build all servers
@@ -68,6 +70,6 @@ echo "================================================"
 # Generate plots
 echo "Generating plots..."
 cd plots
-python3 plot.py
+uv run generate-plots --results-dir ../results
 
 echo "Done! Results are in results/ directory."

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Download MobileNetV2 model and test data, convert to PNG format."""
 
-import os
+import argparse
 import zlib
 import urllib.request
 import tarfile
@@ -17,7 +17,7 @@ def download_file(url: str, dest: Path):
     print(f"Saved to {dest}")
 
 
-def create_sample_images(images_dir: Path, count: int = 100):
+def create_sample_images(images_dir: Path, count: int = 200):
     """Create sample PNG images for testing (random noise as placeholder)."""
     import random
 
@@ -26,7 +26,6 @@ def create_sample_images(images_dir: Path, count: int = 100):
     print(f"Creating {count} sample images...")
 
     for idx in range(count):
-        # Create a 224x224 RGB PNG image
         width, height = 224, 224
         pixels = bytes([random.randint(0, 255) for _ in range(width * height * 3)])
 
@@ -73,8 +72,24 @@ def create_png_rgb(width: int, height: int, pixels: bytes) -> bytes:
 
 
 def main():
-    script_dir = Path(__file__).parent
-    data_dir = script_dir / "data"
+    parser = argparse.ArgumentParser(
+        description="Download MobileNetV2 model and generate test images"
+    )
+    parser.add_argument(
+        "--data-dir",
+        type=Path,
+        default=Path("data"),
+        help="Directory to store model and images (default: data)",
+    )
+    parser.add_argument(
+        "--image-count",
+        type=int,
+        default=200,
+        help="Number of sample images to generate (default: 200)",
+    )
+    args = parser.parse_args()
+
+    data_dir = args.data_dir
     images_dir = data_dir / "images"
     model_path = data_dir / "mobilenetv2-12-int8.onnx"
     tar_path = data_dir / "mobilenetv2.tar.gz"
@@ -97,8 +112,8 @@ def main():
     else:
         print(f"Model already exists: {model_path}")
 
-    if not images_dir.exists() or len(list(images_dir.glob("*.png"))) < 100:
-        create_sample_images(images_dir, count=1000)
+    if not images_dir.exists() or len(list(images_dir.glob("*.png"))) < 200:
+        create_sample_images(images_dir, count=args.image_count)
     else:
         print(
             f"Images already exist: {images_dir} ({len(list(images_dir.glob('*.png')))} files)"

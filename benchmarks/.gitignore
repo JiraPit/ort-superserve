@@ -1,4 +1,4 @@
-# Benchmark data (regenerate with: python3 download_data.py)
+# Benchmark data (regenerate with: uv run download-data --data-dir ../data)
 data/mobilenetv2-12-int8.onnx
 data/images/
 data/*.gz
@@ -6,6 +6,11 @@ data/*.gz
 # Build artifacts
 target/
 Cargo.lock
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
 
 # IDE
 .vscode/
