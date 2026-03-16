@@ -25,7 +25,16 @@ def main():
         default=None,
         help="Directory to save plots (default: same as results-dir)",
     )
+    parser.add_argument(
+        "--exclude",
+        type=str,
+        default="",
+        help="Comma-separated list of server names to exclude (e.g., 'arc-mutex,batched-fn')",
+    )
     args = parser.parse_args()
+
+    # Parse excluded servers
+    excluded_servers = set(s.strip() for s in args.exclude.split(",") if s.strip())
 
     results_dir = args.results_dir or (Path(__file__).parent.parent / "results")
     output_dir = args.output_dir or results_dir
@@ -45,6 +54,9 @@ def main():
     data = {}
     for csv_file in csv_files:
         server_name = csv_file.stem
+        if server_name in excluded_servers:
+            print(f"Excluding {server_name}")
+            continue
         try:
             df = pd.read_csv(csv_file)
             data[server_name] = df
