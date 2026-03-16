@@ -75,7 +75,7 @@ if [ -n "$HOST" ]; then
             --output results/${server}_${MODEL}.csv \
             --ramp-duration 60 \
             --hold-duration 60 \
-            --max-concurrency 512
+            --max-concurrency 2048
         
         sleep 2
     done
@@ -104,7 +104,7 @@ else
             --output results/${server}_${MODEL}.csv \
             --ramp-duration 60 \
             --hold-duration 60 \
-            --max-concurrency 512
+            --max-concurrency 2048
         
         # Stop server
         echo "Stopping $server..."
