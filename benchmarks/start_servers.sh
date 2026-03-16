@@ -53,4 +53,4 @@ for port in "${!SERVERS[@]}"; do
     echo "  ${SERVERS[$port]}: $port"
 done
 echo ""
-echo "To stop all servers, run: pkill -f 'ort-superserve-server|actix-|arc-mutex|batched-fn'"
+echo "To stop all servers, run: pkill -f 'ort-superserve|actix-|arc-mutex|batched-fn'"
