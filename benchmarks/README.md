@@ -48,7 +48,7 @@ cargo run --release --bin ort-superserve-server
 cargo run --release --bin bench-client -- \
     --server ort-superserve \
     --port 3001 \
-    --output results/ort-superserve.csv \
+    --output results_resnet50/ort-superserve.csv \
     --ramp-duration 60 \
     --hold-duration 30 \
     --max-concurrency 2048

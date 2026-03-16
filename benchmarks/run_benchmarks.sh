@@ -47,7 +47,8 @@ declare -A PORTS=(
 )
 
 # Create results directory
-mkdir -p results
+RESULTS_DIR="results_${MODEL_ARG}"
+mkdir -p "$RESULTS_DIR"
 
 # Determine if benchmarking remote host or local servers
 if [ -n "$HOST" ]; then
@@ -67,7 +68,7 @@ if [ -n "$HOST" ]; then
             --server $server \
             --host $HOST \
             --port $port \
-            --output results/${server}_${MODEL}.csv \
+            --output ${RESULTS_DIR}/${server}.csv \
             --ramp-duration 60 \
             --hold-duration 60 \
             --max-concurrency 2048
@@ -96,7 +97,7 @@ else
         cargo run --release --bin bench-client -- \
             --server $server \
             --port $port \
-            --output results/${server}_${MODEL}.csv \
+            --output ${RESULTS_DIR}/${server}.csv \
             --ramp-duration 60 \
             --hold-duration 60 \
             --max-concurrency 2048
@@ -119,6 +120,6 @@ echo "================================================"
 # Generate plots
 echo "Generating plots..."
 cd plots
-uv run generate-plots --results-dir ../results
+uv run plot.py --results-dir ../${RESULTS_DIR}
 
-echo "Done! Results are in results/ directory."
+echo "Done! Results are in ${RESULTS_DIR}/ directory."

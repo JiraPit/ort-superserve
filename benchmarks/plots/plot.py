@@ -56,15 +56,6 @@ def main():
         print("No valid data loaded")
         sys.exit(1)
 
-    colors = {
-        "ort-superserve": "blue",
-        "ort-superserve-8-sessions": "cyan",
-        "actix-with-batching": "green",
-        "actix-without-batching": "orange",
-        "arc-mutex": "red",
-        "batched-fn": "purple",
-    }
-
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Plot 1: Latency vs Concurrency
@@ -84,12 +75,10 @@ def main():
                 )
                 .reset_index()
             )
-            color = colors.get(server_name, "gray")
             ax.plot(
                 agg["concurrency"],
                 agg["latency_p50_ms"],
                 label=server_name,
-                color=color,
                 linewidth=2,
                 marker="o",
                 markersize=3,
@@ -121,12 +110,10 @@ def main():
                 )
                 .reset_index()
             )
-            color = colors.get(server_name, "gray")
             ax.plot(
                 agg["concurrency"],
                 agg["throughput_rps"],
                 label=server_name,
-                color=color,
                 linewidth=2,
                 marker="o",
                 markersize=3,
@@ -158,12 +145,10 @@ def main():
                 )
                 .reset_index()
             )
-            color = colors.get(server_name, "gray")
             ax.plot(
                 agg["concurrency"],
                 agg["latency_p99_ms"],
                 label=server_name,
-                color=color,
                 linewidth=2,
                 marker="o",
                 markersize=3,
