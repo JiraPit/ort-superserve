@@ -36,10 +36,6 @@ if [ ! -f "data/$MODEL_FILE" ] || [ ! -d "data/images" ]; then
     cd ..
 fi
 
-# Build all servers
-echo "Building servers..."
-cargo build --release
-
 # Ports
 declare -A PORTS=(
     ["ort-superserve"]=3001
