@@ -4,24 +4,21 @@ set -e
 cd "$(dirname "$0")"
 
 # Default model
-MODEL="${1:-resnet50}"
-
-# Optional: specify remote host to benchmark against
-HOST="${2:-}"
+MODEL_ARG="${1:-resnet50}"
 
 # Validate model
-if [[ "$MODEL" != "resnet50" && "$MODEL" != "mobilenet" ]]; then
-    echo "Error: Invalid model '$MODEL'. Choose 'resnet50' or 'mobilenet'"
+if [[ "$MODEL_ARG" != "resnet50" && "$MODEL_ARG" != "mobilenet" ]]; then
+    echo "Error: Invalid model '$MODEL_ARG'. Choose 'resnet50' or 'mobilenet'"
     exit 1
 fi
 
-echo "Starting servers with model: $MODEL"
+echo "Starting servers with model: $MODEL_ARG"
 
 # Model name mapping
-case "$MODEL" in
+case "$MODEL_ARG" in
     resnet50) MODEL_NAME="resnet50-v1-12-int8";;
     mobilenet) MODEL_NAME="mobilenetv2-12-int8";;
-    *) MODEL_NAME="$MODEL";;
+    *) MODEL_NAME="$MODEL_ARG";;
 esac
 
 export MODEL="$MODEL_NAME"

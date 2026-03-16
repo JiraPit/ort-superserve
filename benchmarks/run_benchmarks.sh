@@ -4,26 +4,25 @@ set -e
 cd "$(dirname "$0")"
 
 # Default model
-MODEL="${1:-resnet50}"
+MODEL_ARG="${1:-resnet50}"
 shift || true
 
-# Optional: specify remote host to benchmark against (e.g., 192.168.1.100)
-# If not set, will build and run local servers
+# Optional: specify remote host to benchmark against
 HOST="${1:-}"
 
 # Validate model
-if [[ "$MODEL" != "resnet50" && "$MODEL" != "mobilenet" ]]; then
-    echo "Error: Invalid model '$MODEL'. Choose 'resnet50' or 'mobilenet'"
+if [[ "$MODEL_ARG" != "resnet50" && "$MODEL_ARG" != "mobilenet" ]]; then
+    echo "Error: Invalid model '$MODEL_ARG'. Choose 'resnet50' or 'mobilenet'"
     exit 1
 fi
 
-echo "Using model: $MODEL"
+echo "Using model: $MODEL_ARG"
 
 # Model name mapping (used as environment variable for servers)
-case "$MODEL" in
+case "$MODEL_ARG" in
     resnet50) MODEL_NAME="resnet50-v1-12-int8";;
     mobilenet) MODEL_NAME="mobilenetv2-12-int8";;
-    *) MODEL_NAME="$MODEL";;
+    *) MODEL_NAME="$MODEL_ARG";;
 esac
 
 export MODEL="$MODEL_NAME"
@@ -31,9 +30,9 @@ export MODEL="$MODEL_NAME"
 # Download data if needed
 MODEL_FILE="${MODEL_NAME}.onnx"
 if [ ! -f "data/$MODEL_FILE" ] || [ ! -d "data/images" ]; then
-    echo "Downloading $MODEL data..."
+    echo "Downloading $MODEL_ARG data..."
     cd download_data
-    uv run download-data --data-dir ../data --model $MODEL
+    uv run download-data --data-dir ../data --model $MODEL_ARG
     cd ..
 fi
 
@@ -68,7 +67,7 @@ if [ -n "$HOST" ]; then
         echo "================================================"
         
         # Run benchmark against remote
-        MODEL=$MODEL cargo run --release --bin bench-client -- \
+        MODEL=$MODEL_NAME cargo run --release --bin bench-client -- \
             --server $server \
             --host $HOST \
             --port $port \
@@ -89,8 +88,8 @@ else
         echo "================================================"
         
         # Start server
-        echo "Starting $server with MODEL=$MODEL..."
-        MODEL=$MODEL cargo run --release --bin ${server}-server &
+        echo "Starting $server with MODEL=$MODEL_NAME..."
+        MODEL=$MODEL_NAME cargo run --release --bin ${server}-server &
         SERVER_PID=$!
         
         # Wait for warmup
