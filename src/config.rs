@@ -188,6 +188,17 @@ pub struct ServerConfig {
     ///
     /// If not specified, the first output from the model is used.
     pub output_name: Option<String>,
+
+    /// Whether to preprocess inputs immediately in `infer()` before queuing.
+    ///
+    /// When `true`, preprocessing runs in parallel across all `infer()` calls
+    /// using `tokio::spawn`, allowing independent preprocessing but with higher
+    /// memory usage risk (potential OOM if preprocessing is memory-intensive).
+    ///
+    /// When `false` (default), preprocessing is batched and run together using
+    /// `JoinSet` in the batcher, which is more memory-efficient but may have
+    /// higher latency.
+    pub preprocess_on_infer: bool,
 }
 
 impl Default for ServerConfig {
@@ -202,6 +213,7 @@ impl Default for ServerConfig {
             optimization_level: GraphOptimizationLevel::Level3,
             input_name: None,
             output_name: None,
+            preprocess_on_infer: false,
         }
     }
 }
@@ -286,6 +298,16 @@ impl ServerConfig {
     /// If not specified, the first output from the model is used.
     pub fn with_output_name(mut self, name: impl Into<String>) -> Self {
         self.output_name = Some(name.into());
+        self
+    }
+
+    /// Set whether to preprocess inputs immediately in `infer()` before queuing.
+    ///
+    /// When `true`, preprocessing runs in parallel across all `infer()` calls,
+    /// allowing independent preprocessing but with higher memory usage risk.
+    /// When `false` (default), preprocessing is batched and run together.
+    pub fn with_preprocess_on_infer(mut self, enabled: bool) -> Self {
+        self.preprocess_on_infer = enabled;
         self
     }
 }

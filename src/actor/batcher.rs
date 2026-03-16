@@ -1,4 +1,4 @@
-use crate::actor::command::Command;
+use crate::actor::command::{Command, CommandInput};
 use crate::actor::worker::WorkerMessage;
 use crate::config::ServerConfig;
 use crate::traits::{Input, Output};
@@ -87,20 +87,44 @@ impl BatcherTask {
                 let batch_len = batch_buffer.len();
                 tracing::info!("Batcher: Processing batch of {} items...", batch_len);
 
-                // Run preprocessing in parallel with index tracking to preserve order
-                let mut preprocess_tasks = JoinSet::new();
+                // Collect responders and handle preprocessing based on input type
                 let mut responders: Vec<tokio::sync::oneshot::Sender<Result<O>>> =
                     Vec::with_capacity(batch_len);
 
+                // Separate raw and preprocessed inputs
+                let mut raw_inputs: Vec<(usize, I)> = Vec::new();
+                let mut preprocessed_inputs: Vec<(usize, I::Preprocessed)> = Vec::new();
+
                 for (idx, cmd) in batch_buffer.drain(..).enumerate() {
                     responders.push(cmd.responder);
-                    preprocess_tasks.spawn(async move { (idx, cmd.input.preprocess().await) });
+                    match cmd.input {
+                        CommandInput::Raw(input) => raw_inputs.push((idx, input)),
+                        CommandInput::Preprocessed(preprocessed) => {
+                            preprocessed_inputs.push((idx, preprocessed))
+                        }
+                    }
                 }
 
-                // Collect results with index tracking
+                // Track counts before consuming
+                let raw_inputs_count = raw_inputs.len();
+                let preprocessed_inputs_count = preprocessed_inputs.len();
+
+                // Run preprocessing in parallel for raw inputs using JoinSet
+                let mut preprocess_tasks = JoinSet::new();
+                for (idx, input) in raw_inputs {
+                    preprocess_tasks.spawn(async move { (idx, input.preprocess().await) });
+                }
+
+                // Collect results from preprocessing
                 let mut results: HashMap<usize, I::Preprocessed> = HashMap::new();
                 let mut failed_indices: Vec<usize> = Vec::new();
 
+                // Add already preprocessed inputs to results
+                for (idx, preprocessed) in preprocessed_inputs {
+                    results.insert(idx, preprocessed);
+                }
+
+                // Collect preprocessed results from raw inputs
                 while let Some(result) = preprocess_tasks.join_next().await {
                     match result {
                         Ok((idx, Ok(item))) => {
@@ -116,8 +140,10 @@ impl BatcherTask {
                     }
                 }
 
-                // Track panicked tasks: spawned count minus completed count
-                let panicked_count = batch_len - results.len() - failed_indices.len();
+                // Track panicked tasks: spawned raw inputs minus completed minus failed
+                let panicked_count = raw_inputs_count
+                    .saturating_sub(results.len().saturating_sub(preprocessed_inputs_count))
+                    .saturating_sub(failed_indices.len());
                 if panicked_count > 0 {
                     tracing::error!("Batcher: {panicked_count} preprocessing tasks panicked");
                 }

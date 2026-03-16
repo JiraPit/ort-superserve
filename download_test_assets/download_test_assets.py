@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Download model and test data for benchmarking."""
+"""Download model and test data for testing and benchmarking."""
 
 import argparse
 import zlib
@@ -8,13 +8,13 @@ import tarfile
 from pathlib import Path
 
 MODELS = {
-    "resnet50": {
-        "url": "https://github.com/onnx/models/raw/main/validated/vision/classification/resnet/model/resnet50-v1-12-int8.tar.gz",
-        "filename": "resnet50-v1-12-int8.onnx",
-    },
     "mobilenet": {
         "url": "https://github.com/onnx/models/raw/main/validated/vision/classification/mobilenet/model/mobilenetv2-12-int8.tar.gz",
         "filename": "mobilenetv2-12-int8.onnx",
+    },
+    "resnet50": {
+        "url": "https://github.com/onnx/models/raw/main/validated/vision/classification/resnet/model/resnet50-v1-12-int8.tar.gz",
+        "filename": "resnet50-v1-12-int8.onnx",
     },
 }
 
@@ -26,7 +26,7 @@ def download_file(url: str, dest: Path):
     print(f"Saved to {dest}")
 
 
-def create_sample_images(images_dir: Path, count: int = 200):
+def create_sample_images(images_dir: Path, count: int = 10):
     """Create sample PNG images for testing (random noise as placeholder)."""
     import random
 
@@ -44,7 +44,7 @@ def create_sample_images(images_dir: Path, count: int = 200):
         with open(filepath, "wb") as f:
             f.write(png)
 
-        if (idx + 1) % 100 == 0:
+        if (idx + 1) % 10 == 0:
             print(f"  Created {idx + 1}/{count} images")
 
     print(f"Created all {count} images in {images_dir}")
@@ -82,34 +82,40 @@ def create_png_rgb(width: int, height: int, pixels: bytes) -> bytes:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Download model and generate test images"
-    )
-    parser.add_argument(
-        "--data-dir",
-        type=Path,
-        default=Path("data"),
-        help="Directory to store model and images (default: data)",
+        description="Download ONNX model and generate test images"
     )
     parser.add_argument(
         "--model",
         type=str,
-        default="resnet50",
-        choices=["resnet50", "mobilenet"],
-        help="Model to download (default: resnet50)",
+        required=True,
+        choices=["mobilenet", "resnet50"],
+        help="Model to download (required: mobilenet or resnet50)",
+    )
+    parser.add_argument(
+        "--data-dir",
+        type=Path,
+        default=None,
+        help="Directory to store model and images (default: test_assets/{model_filename_root})",
     )
     parser.add_argument(
         "--image-count",
         type=int,
-        default=200,
-        help="Number of sample images to generate (default: 200)",
+        default=10,
+        help="Number of sample images to generate (default: 10)",
     )
     args = parser.parse_args()
 
     model_info = MODELS[args.model]
+    model_filename = model_info["filename"]
+    model_dir_name = model_filename.replace(".onnx", "")
 
-    data_dir = args.data_dir
+    if args.data_dir is None:
+        data_dir = Path("test_assets") / model_dir_name
+    else:
+        data_dir = args.data_dir
+
     images_dir = data_dir / "images"
-    model_path = data_dir / model_info["filename"]
+    model_path = data_dir / model_filename
     tar_path = data_dir / f"{args.model}.tar.gz"
 
     data_dir.mkdir(parents=True, exist_ok=True)
@@ -122,7 +128,7 @@ def main():
         with tarfile.open(tar_path, "r:gz") as tar:
             for member in tar.getmembers():
                 if member.name.endswith(".onnx"):
-                    member.name = model_info["filename"]
+                    member.name = model_filename
                     tar.extract(member, data_dir)
         print(f"Model extracted to {model_path}")
 
@@ -140,7 +146,7 @@ def main():
             f"Images already exist: {images_dir} ({len(list(images_dir.glob('*.png')))} files)"
         )
 
-    print("Done!")
+    print("\nDone!")
     print(f"Model: {model_path}")
     print(f"Images: {images_dir}")
 

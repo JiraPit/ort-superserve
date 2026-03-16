@@ -1,8 +1,8 @@
-//! Benchmark server using the ort-superserve library.
+//! Benchmark server using the ort-superserve library with eager preprocessing.
 //!
-//! This implementation demonstrates the minimal code required to build a
-//! production-grade inference server with dynamic batching and parallel
-//! preprocessing/postprocessing.
+//! This variant spawns preprocessing tasks immediately in `infer()` using
+//! `tokio::spawn`, allowing parallel preprocessing across requests but with
+//! higher memory usage.
 
 use std::{path::PathBuf, sync::Arc, time::Instant};
 use tokio::time::Duration;
@@ -86,7 +86,8 @@ async fn main() -> Result<()> {
         .with_max_batch_size(32)
         .with_min_batch_size(1)
         .with_max_wait_time(Duration::from_millis(10))
-        .with_optimization_level(GraphOptimizationLevel::Level3);
+        .with_optimization_level(GraphOptimizationLevel::Level3)
+        .with_preprocess_on_infer(true);
 
     let server = Server::<MyInput, MyOutput>::from_file(&model_path, config).await?;
 
@@ -98,8 +99,8 @@ async fn main() -> Result<()> {
         .layer(CorsLayer::permissive())
         .with_state(state);
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:3001").await?;
-    println!("ort-superserve-server listening on http://0.0.0.0:3001");
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:3007").await?;
+    println!("ort-superserve-preprocess-server listening on http://0.0.0.0:3007");
 
     axum::serve(listener, app).await?;
 

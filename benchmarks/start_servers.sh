@@ -37,6 +37,7 @@ declare -A SERVERS=(
     [3004]="arc-mutex-server"
     [3005]="batched-fn-server"
     [3006]="ort-superserve-8-sessions-server"
+    [3007]="ort-superserve-preprocess-server"
 )
 
 # Start all servers

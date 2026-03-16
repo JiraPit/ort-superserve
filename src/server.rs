@@ -56,8 +56,8 @@ use std::sync::Arc;
 /// # }
 /// ```
 pub struct Server<I: Input, O: Output> {
-    /// Channel sender for dispatching inference commands to the batcher.
     command_tx: kanal::AsyncSender<Command<I, O>>,
+    preprocess_on_infer: bool,
     _phantom: std::marker::PhantomData<O>,
 }
 
@@ -65,6 +65,7 @@ impl<I: Input, O: Output> Clone for Server<I, O> {
     fn clone(&self) -> Self {
         Self {
             command_tx: self.command_tx.clone(),
+            preprocess_on_infer: self.preprocess_on_infer,
             _phantom: std::marker::PhantomData,
         }
     }
@@ -224,6 +225,7 @@ impl<I: Input, O: Output> Server<I, O> {
 
         Ok(Self {
             command_tx,
+            preprocess_on_infer: config.preprocess_on_infer,
             _phantom: std::marker::PhantomData,
         })
     }
@@ -247,10 +249,18 @@ impl<I: Input, O: Output> Server<I, O> {
     pub async fn infer(&self, input: I) -> Result<O> {
         let (responder, response) = tokio::sync::oneshot::channel();
 
-        self.command_tx
-            .send(Command::new(input, responder))
-            .await
-            .map_err(|_| anyhow::Error::msg("Server channel closed"))?;
+        if self.preprocess_on_infer {
+            let preprocessed = input.preprocess().await?;
+            self.command_tx
+                .send(Command::new_preprocessed(preprocessed, responder))
+                .await
+                .map_err(|_| anyhow::Error::msg("Server channel closed"))?;
+        } else {
+            self.command_tx
+                .send(Command::new_raw(input, responder))
+                .await
+                .map_err(|_| anyhow::Error::msg("Server channel closed"))?;
+        }
 
         response.await.context("Response channel closed")?
     }

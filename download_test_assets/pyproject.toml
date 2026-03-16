@@ -1,12 +1,12 @@
 [project]
-name = "download-data"
+name = "download-test-assets"
 version = "0.1.0"
-description = "Download MobileNetV2 model and generate test images for benchmarks"
+description = "Download ONNX models and generate test images for testing"
 requires-python = ">=3.10"
 dependencies = []
 
 [project.scripts]
-download-data = "download_data:main"
+download-test-assets = "download_test_assets:main"
 
 [build-system]
 requires = ["hatchling"]

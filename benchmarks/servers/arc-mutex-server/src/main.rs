@@ -31,7 +31,10 @@ async fn main() -> Result<()> {
         .unwrap()
         .parent()
         .unwrap()
-        .join("data")
+        .parent()
+        .unwrap()
+        .join("test_assets")
+        .join(&model_name)
         .join(&model_filename);
 
     let session = Session::builder()
