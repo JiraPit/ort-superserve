@@ -119,7 +119,6 @@ echo "================================================"
 
 # Generate plots
 echo "Generating plots..."
-cd plots
-uv run plot.py --results-dir ../${RESULTS_DIR}
+uv run plots/plot.py --results-dir ${RESULTS_DIR}
 
 echo "Done! Results are in ${RESULTS_DIR}/ directory."
