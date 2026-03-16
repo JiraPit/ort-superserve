@@ -58,12 +58,16 @@ struct AppState {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let model_name = std::env::var("MODEL").unwrap_or_else(|_| "resnet50-v1-12-int8".to_string());
+    let model_filename = format!("{}.onnx", model_name);
+    
     let model_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()
         .parent()
         .unwrap()
-        .join("data/resnet50-v1-12-int8.onnx");
+        .join("data")
+        .join(&model_filename);
 
     let config = ServerConfig::new()
         .with_num_sessions(8)

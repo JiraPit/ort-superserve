@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Download ResNet50 model and test data, convert to PNG format."""
+"""Download model and test data for benchmarking."""
 
 import argparse
 import zlib
@@ -7,7 +7,16 @@ import urllib.request
 import tarfile
 from pathlib import Path
 
-MODEL_URL = "https://github.com/onnx/models/raw/main/validated/vision/classification/resnet/model/resnet50-v1-12-int8.tar.gz"
+MODELS = {
+    "resnet50": {
+        "url": "https://github.com/onnx/models/raw/main/validated/vision/classification/resnet/model/resnet50-v1-12-int8.tar.gz",
+        "filename": "resnet50-v1-12-int8.onnx",
+    },
+    "mobilenet": {
+        "url": "https://github.com/onnx/models/raw/main/validated/vision/classification/mobilenet/model/mobilenetv2-12-int8.tar.gz",
+        "filename": "mobilenetv2-12-int8.onnx",
+    },
+}
 
 
 def download_file(url: str, dest: Path):
@@ -73,13 +82,20 @@ def create_png_rgb(width: int, height: int, pixels: bytes) -> bytes:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Download ResNet50 model and generate test images"
+        description="Download model and generate test images"
     )
     parser.add_argument(
         "--data-dir",
         type=Path,
         default=Path("data"),
         help="Directory to store model and images (default: data)",
+    )
+    parser.add_argument(
+        "--model",
+        type=str,
+        default="resnet50",
+        choices=["resnet50", "mobilenet"],
+        help="Model to download (default: resnet50)",
     )
     parser.add_argument(
         "--image-count",
@@ -89,22 +105,24 @@ def main():
     )
     args = parser.parse_args()
 
+    model_info = MODELS[args.model]
+
     data_dir = args.data_dir
     images_dir = data_dir / "images"
-    model_path = data_dir / "resnet50-v1-12-int8.onnx"
-    tar_path = data_dir / "resnet50.tar.gz"
+    model_path = data_dir / model_info["filename"]
+    tar_path = data_dir / f"{args.model}.tar.gz"
 
     data_dir.mkdir(parents=True, exist_ok=True)
 
     if not model_path.exists():
         if not tar_path.exists():
-            download_file(MODEL_URL, tar_path)
+            download_file(model_info["url"], tar_path)
 
         print("Extracting model...")
         with tarfile.open(tar_path, "r:gz") as tar:
             for member in tar.getmembers():
                 if member.name.endswith(".onnx"):
-                    member.name = "resnet50-v1-12-int8.onnx"
+                    member.name = model_info["filename"]
                     tar.extract(member, data_dir)
         print(f"Model extracted to {model_path}")
 
@@ -112,7 +130,10 @@ def main():
     else:
         print(f"Model already exists: {model_path}")
 
-    if not images_dir.exists() or len(list(images_dir.glob("*.png"))) < 200:
+    if (
+        not images_dir.exists()
+        or len(list(images_dir.glob("*.png"))) < args.image_count
+    ):
         create_sample_images(images_dir, count=args.image_count)
     else:
         print(

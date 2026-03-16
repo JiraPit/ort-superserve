@@ -3,15 +3,37 @@ set -e
 
 cd "$(dirname "$0")"
 
+# Default model
+MODEL="${1:-resnet50}"
+shift || true
+
 # Optional: specify remote host to benchmark against (e.g., 192.168.1.100)
 # If not set, will build and run local servers
 HOST="${1:-}"
 
+# Validate model
+if [[ "$MODEL" != "resnet50" && "$MODEL" != "mobilenet" ]]; then
+    echo "Error: Invalid model '$MODEL'. Choose 'resnet50' or 'mobilenet'"
+    exit 1
+fi
+
+echo "Using model: $MODEL"
+
+# Model name mapping (used as environment variable for servers)
+case "$MODEL" in
+    resnet50) MODEL_NAME="resnet50-v1-12-int8";;
+    mobilenet) MODEL_NAME="mobilenetv2-12-int8";;
+    *) MODEL_NAME="$MODEL";;
+esac
+
+export MODEL="$MODEL_NAME"
+
 # Download data if needed
-if [ ! -f "data/resnet50-v1-12-int8.onnx" ] || [ ! -d "data/images" ]; then
-    echo "Downloading ResNet50 data..."
+MODEL_FILE="${MODEL_NAME}.onnx"
+if [ ! -f "data/$MODEL_FILE" ] || [ ! -d "data/images" ]; then
+    echo "Downloading $MODEL data..."
     cd download_data
-    uv run download-data --data-dir ../data
+    uv run download-data --data-dir ../data --model $MODEL
     cd ..
 fi
 
@@ -46,11 +68,11 @@ if [ -n "$HOST" ]; then
         echo "================================================"
         
         # Run benchmark against remote
-        cargo run --release --bin bench-client -- \
+        MODEL=$MODEL cargo run --release --bin bench-client -- \
             --server $server \
             --host $HOST \
             --port $port \
-            --output results/${server}.csv \
+            --output results/${server}_${MODEL}.csv \
             --ramp-duration 60 \
             --hold-duration 60 \
             --max-concurrency 512
@@ -67,8 +89,8 @@ else
         echo "================================================"
         
         # Start server
-        echo "Starting $server..."
-        cargo run --release --bin ${server}-server &
+        echo "Starting $server with MODEL=$MODEL..."
+        MODEL=$MODEL cargo run --release --bin ${server}-server &
         SERVER_PID=$!
         
         # Wait for warmup
@@ -79,7 +101,7 @@ else
         cargo run --release --bin bench-client -- \
             --server $server \
             --port $port \
-            --output results/${server}.csv \
+            --output results/${server}_${MODEL}.csv \
             --ramp-duration 60 \
             --hold-duration 60 \
             --max-concurrency 512

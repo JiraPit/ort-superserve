@@ -95,12 +95,16 @@ struct AppState {
 
 #[actix::main]
 async fn main() -> Result<()> {
+    let model_name = std::env::var("MODEL").unwrap_or_else(|_| "resnet50-v1-12-int8".to_string());
+    let model_filename = format!("{}.onnx", model_name);
+    
     let model_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()
         .parent()
         .unwrap()
-        .join("data/resnet50-v1-12-int8.onnx");
+        .join("data")
+        .join(&model_filename);
 
     let model_path_clone = model_path.clone();
     let actor = SyncArbiter::start(1, move || {

@@ -21,14 +21,22 @@ use std::{path::PathBuf, sync::Arc};
 use tokio::time::Instant as TokioInstant;
 use tower_http::cors::CorsLayer;
 
+fn get_model_path() -> PathBuf {
+    let model_name = std::env::var("MODEL").unwrap_or_else(|_| "resnet50-v1-12-int8".to_string());
+    let model_filename = format!("{}.onnx", model_name);
+    
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("data")
+        .join(&model_filename)
+}
+
 /// Global ONNX session protected by a mutex.
 static SESSION: Lazy<Mutex<Session>> = Lazy::new(|| {
-    let model_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .join("data/resnet50-v1-12-int8.onnx");
+    let model_path = get_model_path();
 
     let session = Session::builder()
         .expect("Failed to create builder")
@@ -156,8 +164,12 @@ static BATCH_PREDICT: Lazy<AppState> = Lazy::new(|| {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    println!("Initializing model...");
     Lazy::force(&SESSION);
+    println!("Input name: {}", &*INPUT_NAME);
+    println!("Output name: {}", &*OUTPUT_NAME);
     Lazy::force(&BATCH_PREDICT);
+    println!("Model ready");
 
     let state: AppState = Arc::clone(&BATCH_PREDICT);
 
