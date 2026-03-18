@@ -19,5 +19,5 @@ __pycache__/
 Thumbs.db
 
 # Benchmark results
-results/*.csv
-results/*.png
+results*
+results*
