@@ -10,7 +10,7 @@ use anyhow::Result;
 use axum::{Json, Router, extract::State, routing::post};
 use ndarray::{ArrayD, ArrayViewD};
 use ort::session::builder::GraphOptimizationLevel;
-use ort_superserve::{Input, Output, Server, ServerConfig, helpers::batch_array};
+use ort_superserve::{Input, Output, Server, ServerConfig, create_env, helpers::batch_array};
 use shared::{ImageInput, ImageOutput, apply_imagenet_normalization};
 use tower_http::cors::CorsLayer;
 
@@ -73,13 +73,18 @@ async fn main() -> Result<()> {
         .join(&model_name)
         .join(&model_filename);
 
+    // Create the ONNX Runtime environment explicitly. ONNX Runtime allows one per
+    // process, so applications with several servers should share (clone) it.
+    let env = create_env()?;
+
     let config = ServerConfig::new()
         .with_num_sessions(8)
         .with_threads_per_session(4)
         .with_max_batch_size(32)
         .with_min_batch_size(1)
         .with_max_wait_time(Duration::from_millis(10))
-        .with_optimization_level(GraphOptimizationLevel::Level3);
+        .with_optimization_level(GraphOptimizationLevel::Level3)
+        .with_environment(env);
 
     let server = Server::<MyInput, MyOutput>::from_file(&model_path, config).await?;
 
