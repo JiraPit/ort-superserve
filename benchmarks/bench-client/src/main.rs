@@ -28,8 +28,8 @@ struct Args {
     #[arg(short, long, default_value = "results/default.csv")]
     output: PathBuf,
 
-    /// Data directory containing MNIST images
-    #[arg(long, default_value = "data/images")]
+    /// Directory of PNG images to send (created by download_test_assets)
+    #[arg(long, default_value = "../test_assets/resnet50-v1-12-int8/images")]
     data_dir: PathBuf,
 
     /// Ramp duration in seconds (concurrency goes from 1 to max)

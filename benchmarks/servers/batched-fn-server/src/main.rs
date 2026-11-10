@@ -24,7 +24,7 @@ use tower_http::cors::CorsLayer;
 fn get_model_path() -> PathBuf {
     let model_name = std::env::var("MODEL").unwrap_or_else(|_| "resnet50-v1-12-int8".to_string());
     let model_filename = format!("{}.onnx", model_name);
-    
+
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()
@@ -41,9 +41,7 @@ fn get_model_path() -> PathBuf {
 static SESSION: Lazy<Mutex<Session>> = Lazy::new(|| {
     let model_path = get_model_path();
 
-    let environment = ort::init()
-        .build()
-        .expect("Failed to create environment");
+    let environment = ort::init().build().expect("Failed to create environment");
 
     let session = Session::builder(&environment)
         .expect("Failed to create builder")
@@ -60,13 +58,21 @@ static SESSION: Lazy<Mutex<Session>> = Lazy::new(|| {
 /// Global input tensor name.
 static INPUT_NAME: Lazy<String> = Lazy::new(|| {
     let session = SESSION.lock().unwrap();
-    session.inputs().first().map(|i| i.name().to_string()).expect("Model has no inputs")
+    session
+        .inputs()
+        .first()
+        .map(|i| i.name().to_string())
+        .expect("Model has no inputs")
 });
 
 /// Global output tensor name.
 static OUTPUT_NAME: Lazy<String> = Lazy::new(|| {
     let session = SESSION.lock().unwrap();
-    session.outputs().first().map(|o| o.name().to_string()).expect("Model has no outputs")
+    session
+        .outputs()
+        .first()
+        .map(|o| o.name().to_string())
+        .expect("Model has no outputs")
 });
 
 /// Type alias for a batch of items.
@@ -173,8 +179,8 @@ static BATCH_PREDICT: Lazy<AppState> = Lazy::new(|| {
 async fn main() -> Result<()> {
     println!("Initializing model...");
     Lazy::force(&SESSION);
-    println!("Input name: {}", &*INPUT_NAME);
-    println!("Output name: {}", &*OUTPUT_NAME);
+    println!("Input name: {}", *INPUT_NAME);
+    println!("Output name: {}", *OUTPUT_NAME);
     Lazy::force(&BATCH_PREDICT);
     println!("Model ready");
 

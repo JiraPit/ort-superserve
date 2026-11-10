@@ -168,6 +168,8 @@ let server = Server::<MyInput, MyOutput>::from_file("model.onnx", config).await?
 let server = Server::<MyInput, MyOutput>::from_url("https://example.com/model.onnx", config).await?;
 ```
 
+Both constructors return once every session in the pool has loaded the model, and fail if any session cannot be initialized. `from_url` downloads the model to a temporary file and deletes it after startup.
+
 ## Axum Integration
 
 Share the server across all HTTP handlers using `Arc`:

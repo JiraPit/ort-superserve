@@ -83,8 +83,6 @@ pub struct PersonDetectionOutput {
     pub original_dims: (u32, u32),
 }
 
-pub struct PersonDetectionBatcher;
-
 impl Output<ImageScale> for PersonDetectionOutput {
     async fn postprocess(raw: ArrayViewD<'_, f32>, scale: ImageScale) -> Result<Self> {
         let shape = raw.shape().to_vec();

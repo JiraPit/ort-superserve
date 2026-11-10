@@ -27,13 +27,14 @@ esac
 
 export MODEL="$MODEL_NAME"
 
-# Download data if needed
+# Download the model and test images into <repo>/test_assets if needed
+# (the servers load the model from there).
 MODEL_FILE="${MODEL_NAME}.onnx"
-if [ ! -f "data/$MODEL_FILE" ] || [ ! -d "data/images" ]; then
+ASSETS_DIR="../test_assets/${MODEL_NAME}"
+IMAGES_DIR="${ASSETS_DIR}/images"
+if [ ! -f "$ASSETS_DIR/$MODEL_FILE" ] || [ ! -d "$IMAGES_DIR" ]; then
     echo "Downloading $MODEL_ARG data..."
-    cd download_data
-    uv run download-data --data-dir ../data --model $MODEL_ARG
-    cd ..
+    (cd .. && uv run --project download_test_assets download_test_assets/download_test_assets.py --model "$MODEL_ARG")
 fi
 
 # Ports
@@ -69,6 +70,7 @@ if [ -n "$HOST" ]; then
             --host $HOST \
             --port $port \
             --output ${RESULTS_DIR}/${server}.csv \
+            --data-dir "$IMAGES_DIR" \
             --ramp-duration 60 \
             --hold-duration 60 \
             --max-concurrency 2048
@@ -98,6 +100,7 @@ else
             --server $server \
             --port $port \
             --output ${RESULTS_DIR}/${server}.csv \
+            --data-dir "$IMAGES_DIR" \
             --ramp-duration 60 \
             --hold-duration 60 \
             --max-concurrency 2048

@@ -37,8 +37,8 @@ pub fn env() -> Environment {
 
 /// An ONNX model written to a temporary file.
 ///
-/// Workers load the model from disk after `Server::from_file` returns, so the
-/// fixture must outlive the server.
+/// Keep the fixture alive until `Server::from_file` returns; every session has
+/// loaded the model by then.
 pub struct ModelFixture {
     file: NamedTempFile,
 }
@@ -66,6 +66,12 @@ impl ModelFixture {
     /// Reduces over the batch axis, so the output is always `[1, 4]`.
     pub fn batch_collapsing() -> Self {
         Self::new(onnx::batch_collapsing_model())
+    }
+
+    /// Squeezes every size-1 axis of `x: [N, 1]`: a batch of 1 produces a scalar
+    /// (no batch axis), a batch of N > 1 produces `[N]`.
+    pub fn squeezing() -> Self {
+        Self::new(onnx::squeezing_model())
     }
 
     /// Casts the input to int64, so the output is not `f32`.

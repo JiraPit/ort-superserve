@@ -31,7 +31,7 @@ fn custom_provider_callback_error_fails_the_build() {
     let model = ModelFixture::doubling();
     let config = ServerConfig::new().with_execution_provider(ExecutionProvider::Custom(
         // ONNX Runtime rejects empty config keys, so the callback itself fails.
-        Arc::new(|builder| builder.with_config_entry("", "value")),
+        Arc::new(|builder| Ok(builder.with_config_entry("", "value")?)),
     ));
 
     let err = SessionBuilder::build(&env(), model.path().to_str().unwrap(), &config)

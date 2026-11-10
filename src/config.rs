@@ -8,16 +8,13 @@ use std::time::Duration;
 /// The callback receives a session builder and returns a configured builder.
 /// This allows arbitrary customization of the ONNX Runtime session.
 ///
-/// Note: The error type is `ort::Error<SessionBuilder>` which allows recovering
-/// the builder from errors. Use `.map_err(|e| e.to_string())` if you need
-/// to convert errors to strings.
+/// Builder methods return `ort::Error<SessionBuilder>`; the `?` operator
+/// converts it into the `ort::Error` this callback returns.
 pub type SessionBuilderCallback = Arc<
     dyn Fn(
             ort::session::builder::SessionBuilder,
-        ) -> Result<
-            ort::session::builder::SessionBuilder,
-            ort::Error<ort::session::builder::SessionBuilder>,
-        > + Send
+        ) -> Result<ort::session::builder::SessionBuilder, ort::Error>
+        + Send
         + Sync,
 >;
 
@@ -71,12 +68,12 @@ pub enum ExecutionProvider {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust
     /// use ort_superserve::ExecutionProvider;
     /// use std::sync::Arc;
     ///
     /// let custom = ExecutionProvider::Custom(Arc::new(|builder| {
-    ///     builder.with_memory_pattern(true)
+    ///     Ok(builder.with_memory_pattern(true)?)
     /// }));
     /// ```
     Custom(SessionBuilderCallback),

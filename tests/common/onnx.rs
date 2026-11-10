@@ -57,6 +57,20 @@ fn value_info(name: &str, elem_type: i64, dims: &[Dim]) -> Vec<u8> {
     info
 }
 
+/// `ValueInfoProto` for a tensor whose shape is left unspecified.
+fn unshaped_value_info(name: &str, elem_type: i64) -> Vec<u8> {
+    let mut tensor_type = Vec::new();
+    int_field(&mut tensor_type, 1, elem_type);
+
+    let mut type_proto = Vec::new();
+    bytes_field(&mut type_proto, 1, &tensor_type);
+
+    let mut info = Vec::new();
+    bytes_field(&mut info, 1, name.as_bytes());
+    bytes_field(&mut info, 2, &type_proto);
+    info
+}
+
 /// Scalar float `TensorProto` used as an initializer.
 fn scalar_initializer(name: &str, value: f32) -> Vec<u8> {
     let mut tensor = Vec::new();
@@ -173,6 +187,15 @@ pub fn batch_collapsing_model() -> Vec<u8> {
         &[],
         &[batched_float("x")],
         &[value_info("y", ELEM_FLOAT, &[Dim::Fixed(1), Dim::Fixed(4)])],
+    )
+}
+
+pub fn squeezing_model() -> Vec<u8> {
+    model(
+        &[node("Squeeze", &["x"], &["y"], &[])],
+        &[],
+        &[value_info("x", ELEM_FLOAT, &[Dim::Batch, Dim::Fixed(1)])],
+        &[unshaped_value_info("y", ELEM_FLOAT)],
     )
 }
 

@@ -5,6 +5,7 @@ use anyhow::Result;
 use ndarray::{ArrayD, IxDyn};
 use ort::session::{Session, SessionInputValue, SessionInputs};
 use ort::value::TensorRef;
+use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 use std::thread;
 
@@ -18,13 +19,16 @@ pub struct WorkerTask;
 impl WorkerTask {
     /// Spawn a worker thread with its own ONNX session.
     ///
-    /// The worker will initialize the session, then process batches
-    /// from its dedicated channel until shutdown. Failed sessions are retried
-    /// with exponential backoff.
+    /// The worker initializes its session and reports the outcome on `ready_tx`.
+    /// If initialization fails, the worker exits. Otherwise it processes
+    /// batches from its dedicated channel until the channel closes. A panic
+    /// while processing a batch fails that batch only; the worker keeps running.
     ///
     /// # Arguments
     ///
     /// * `worker_rx` - Dedicated receiver for this worker's messages.
+    /// * `ready_tx` - Receives `Ok(())` once the session is ready, or the
+    ///   initialization error.
     /// * `environment` - ONNX Runtime environment to create the session in.
     /// * `model_path` - Path to the ONNX model file.
     /// * `config` - Server configuration.
@@ -35,6 +39,7 @@ impl WorkerTask {
     /// A `JoinHandle` for the spawned thread.
     pub fn spawn(
         worker_rx: kanal::AsyncReceiver<WorkerMessage>,
+        ready_tx: tokio::sync::oneshot::Sender<Result<()>>,
         environment: Environment,
         model_path: Arc<String>,
         config: Arc<ServerConfig>,
@@ -43,21 +48,17 @@ impl WorkerTask {
         thread::spawn(move || {
             tracing::info!("Worker {}: Initializing ONNX session...", worker_id);
 
-            // Initialize session with retry on failure
-            let mut session = loop {
-                match SessionBuilder::build(&environment, &model_path, &config) {
-                    Ok(s) => break s,
-                    Err(e) => {
-                        tracing::error!(
-                            "Worker {}: Failed to initialize session: {e:#}. Retrying in 5s...",
-                            worker_id
-                        );
-                        thread::sleep(std::time::Duration::from_secs(5));
-                    }
+            let mut session = match SessionBuilder::build(&environment, &model_path, &config) {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::error!("Worker {}: Failed to initialize session: {e:#}", worker_id);
+                    let _ = ready_tx.send(Err(e));
+                    return;
                 }
             };
 
             tracing::info!("Worker {}: Session initialized successfully.", worker_id);
+            let _ = ready_tx.send(Ok(()));
 
             let sync_rx = worker_rx.clone().to_sync();
             loop {
@@ -69,7 +70,14 @@ impl WorkerTask {
                     }
                 };
 
-                Self::process_message(worker_id, &mut session, msg);
+                // A panic drops the message's result channel, so the batcher
+                // fails just this batch; the session stays usable.
+                let processed = std::panic::catch_unwind(AssertUnwindSafe(|| {
+                    Self::process_message(worker_id, &mut session, msg)
+                }));
+                if processed.is_err() {
+                    tracing::error!("Worker {}: Panicked while processing a batch.", worker_id);
+                }
             }
         })
     }

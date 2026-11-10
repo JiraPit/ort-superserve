@@ -94,9 +94,9 @@ impl<I: Input, O: Output<I::Context>> Server<I, O> {
     ///
     /// # Errors
     ///
-    /// Returns an error if the model file cannot be loaded, the session
-    /// fails to initialize, or the config has no environment and one
-    /// already exists in this process.
+    /// Returns an error if the model file cannot be loaded, any session in
+    /// the pool fails to initialize, or the config has no environment and
+    /// one already exists in this process.
     pub async fn from_file<P: AsRef<Path>>(path: P, config: ServerConfig) -> Result<Self> {
         let environment = Self::resolve_environment(&config)?;
         let path_str = path.as_ref().to_string_lossy().to_string();
@@ -124,12 +124,13 @@ impl<I: Input, O: Output<I::Context>> Server<I, O> {
 
         drop(session);
 
-        Self::start(environment, path_str, config, input_name, output_name)
+        Self::start(environment, path_str, config, input_name, output_name).await
     }
 
     /// Download a model from a URL and start the inference server.
     ///
-    /// The model is downloaded to a temporary file and loaded into memory.
+    /// The model is downloaded to a temporary file, loaded into every session,
+    /// and the file is then deleted (also when startup fails).
     ///
     /// # Arguments
     ///
@@ -144,8 +145,8 @@ impl<I: Input, O: Output<I::Context>> Server<I, O> {
     /// # Errors
     ///
     /// Returns an error if the download fails, the model cannot be loaded,
-    /// or the config has no environment and one already exists in this
-    /// process.
+    /// any session in the pool fails to initialize, or the config has no
+    /// environment and one already exists in this process.
     pub async fn from_url(url: &str, config: ServerConfig) -> Result<Self> {
         let environment = Self::resolve_environment(&config)?;
         let temp_dir = std::env::temp_dir();
@@ -170,11 +171,31 @@ impl<I: Input, O: Output<I::Context>> Server<I, O> {
             .await
             .context("Failed to read model bytes")?;
 
-        std::fs::write(&model_path, &bytes)
-            .with_context(|| format!("Failed to write model to {}", model_path_str))?;
+        if let Err(e) = std::fs::write(&model_path, &bytes) {
+            let _ = std::fs::remove_file(&model_path);
+            return Err(e).with_context(|| format!("Failed to write model to {}", model_path_str));
+        }
 
         tracing::info!("Model downloaded successfully.");
 
+        // Every session has loaded the model once startup finishes, successfully
+        // or not, so the downloaded file is no longer needed.
+        let result = Self::start_from_downloaded(environment, model_path_str, config).await;
+        if let Err(e) = std::fs::remove_file(&model_path) {
+            tracing::warn!(
+                "Failed to remove downloaded model {}: {e}",
+                model_path.display()
+            );
+        }
+        result
+    }
+
+    /// Start the server from a model file downloaded by [`Self::from_url`].
+    async fn start_from_downloaded(
+        environment: Environment,
+        model_path_str: String,
+        config: ServerConfig,
+    ) -> Result<Self> {
         let session = SessionBuilder::build(&environment, &model_path_str, &config)
             .map_err(|e| anyhow::Error::msg(e.to_string()))?;
 
@@ -198,7 +219,7 @@ impl<I: Input, O: Output<I::Context>> Server<I, O> {
 
         drop(session);
 
-        Self::start(environment, model_path_str, config, input_name, output_name)
+        Self::start(environment, model_path_str, config, input_name, output_name).await
     }
 
     /// Use the configured environment, or create one if none was given.
@@ -212,8 +233,9 @@ impl<I: Input, O: Output<I::Context>> Server<I, O> {
     /// Start the server with the given configuration.
     ///
     /// Spawns worker threads for ONNX sessions and a batcher task for
-    /// collecting and dispatching requests.
-    fn start(
+    /// collecting and dispatching requests. Waits until every worker's session
+    /// is ready, and fails if any of them cannot be initialized.
+    async fn start(
         environment: Environment,
         model_path: String,
         config: ServerConfig,
@@ -226,18 +248,30 @@ impl<I: Input, O: Output<I::Context>> Server<I, O> {
         let (command_tx, command_rx) = kanal::unbounded_async::<Command<I, O>>();
 
         let mut worker_txs: Vec<kanal::AsyncSender<WorkerMessage>> = Vec::new();
+        let mut ready_rxs = Vec::with_capacity(config.num_sessions);
 
         for worker_id in 0..config.num_sessions {
             let (worker_tx, worker_rx) = kanal::unbounded_async::<WorkerMessage>();
+            let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
             worker_txs.push(worker_tx);
+            ready_rxs.push(ready_rx);
 
             WorkerTask::spawn(
                 worker_rx,
+                ready_tx,
                 environment.clone(),
                 Arc::clone(&model_path),
                 Arc::clone(&config),
                 worker_id,
             );
+        }
+
+        // On failure, returning drops `worker_txs`, which stops the healthy workers.
+        for (worker_id, ready_rx) in ready_rxs.into_iter().enumerate() {
+            ready_rx
+                .await
+                .context("Worker exited before reporting readiness")?
+                .with_context(|| format!("Worker {worker_id} failed to initialize its session"))?;
         }
 
         let _batcher_handle = BatcherTask::spawn::<I, O>(

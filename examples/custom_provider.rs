@@ -43,9 +43,9 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
 
     let custom_provider = ExecutionProvider::Custom(Arc::new(|builder| {
-        builder
+        Ok(builder
             .with_memory_pattern(true)?
-            .with_execution_providers([ort::ep::CPU::default().build()])
+            .with_execution_providers([ort::ep::CPU::default().build()])?)
     }));
 
     // Create the ONNX Runtime environment explicitly. ONNX Runtime allows one per

@@ -60,8 +60,10 @@ impl Input for AudioInput {
             // Convert stereo to mono
             let mono_samples = if self.channels == 2 {
                 self.samples
-                    .chunks_exact(2)
-                    .map(|chunk| (chunk[0] + chunk[1]) / 2.0)
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|[left, right]| (left + right) / 2.0)
                     .collect()
             } else {
                 self.samples

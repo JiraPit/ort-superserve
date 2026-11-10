@@ -21,9 +21,6 @@ Cargo.lock
 # Test assets (models and images)
 test_assets/
 
-# Benchmark data
-benchmarks/data/
-
 # Python
 __pycache__/
 *.py[cod]

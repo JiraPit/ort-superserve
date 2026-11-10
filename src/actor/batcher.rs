@@ -220,10 +220,11 @@ impl BatcherTask {
                         continue;
                     }
                     Err(_) => {
-                        tracing::error!("Batcher: Worker channel closed unexpectedly");
+                        tracing::error!("Batcher: Worker {worker_idx} returned no result");
                         for responder in responders {
-                            let _ =
-                                responder.send(Err(anyhow::Error::msg("Worker channel closed")));
+                            let _ = responder.send(Err(anyhow::Error::msg(
+                                "Inference failed: worker returned no result",
+                            )));
                         }
                         continue;
                     }

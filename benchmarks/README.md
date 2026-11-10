@@ -18,6 +18,7 @@ This directory contains benchmarks comparing different approaches to ONNX sessio
 |--------|------|-------------|
 | `ort-superserve-server` | 3001 | ort-superserve library with dynamic batching |
 | `ort-superserve-8-sessions-server` | 3006 | ort-superserve with 8 sessions |
+| `ort-superserve-preprocess-server` | 3007 | ort-superserve with eager preprocessing (`preprocess_on_infer`); started by `start_servers.sh` only |
 | `actix-with-batching-server` | 3002 | Manual actix actors with batching |
 | `actix-without-batching-server` | 3003 | Manual actix actor without batching |
 | `arc-mutex-server` | 3004 | Naive `Arc<Mutex<Session>>` baseline |
@@ -26,17 +27,19 @@ This directory contains benchmarks comparing different approaches to ONNX sessio
 ## Quick Start
 
 ```bash
-# Download ResNet50 model and test images
-cd download_data
-uv run download-data --data-dir ../data
-cd ..
-
-# Build all servers
-cargo build --release
-
-# Run all benchmarks
+# Run all benchmarks (ResNet50 by default, or pass `mobilenet`).
+# Downloads the model and test images into <repo>/test_assets/ if they are missing.
 ./run_benchmarks.sh
+./run_benchmarks.sh mobilenet
 ```
+
+To download the assets yourself, run from the repository root:
+
+```bash
+uv run --project download_test_assets download_test_assets/download_test_assets.py --model resnet50
+```
+
+This creates `test_assets/resnet50-v1-12-int8/`, containing the model and an `images/` directory. The servers load the model from there.
 
 ## Manual Benchmarking
 
@@ -48,6 +51,7 @@ cargo run --release --bin ort-superserve-server
 cargo run --release --bin bench-client -- \
     --server ort-superserve \
     --port 3001 \
+    --data-dir ../test_assets/resnet50-v1-12-int8/images \
     --output results_resnet50/ort-superserve.csv \
     --ramp-duration 60 \
     --hold-duration 30 \
@@ -62,6 +66,7 @@ cargo run --release --bin bench-client -- \
 | `--hold-duration` | 30 | Seconds to hold at max concurrency |
 | `--max-concurrency` | 2048 | Maximum concurrent requests |
 | `--warmup-requests` | 10 | Warmup requests before benchmarking |
+| `--data-dir` | `../test_assets/resnet50-v1-12-int8/images` | Directory of PNG images to send |
 
 ## Model
 

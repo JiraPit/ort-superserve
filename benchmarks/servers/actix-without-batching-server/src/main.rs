@@ -38,11 +38,23 @@ impl InferenceActor {
             .map_err(|e| anyhow::Error::msg(e.to_string()))?
             .commit_from_file(model_path)
             .map_err(|e| anyhow::Error::msg(e.to_string()))?;
-        
-        let input_name = session.inputs().first().map(|i| i.name().to_string()).expect("Model has no inputs");
-        let output_name = session.outputs().first().map(|o| o.name().to_string()).expect("Model has no outputs");
-        
-        Ok(Self { session, input_name, output_name })
+
+        let input_name = session
+            .inputs()
+            .first()
+            .map(|i| i.name().to_string())
+            .expect("Model has no inputs");
+        let output_name = session
+            .outputs()
+            .first()
+            .map(|o| o.name().to_string())
+            .expect("Model has no outputs");
+
+        Ok(Self {
+            session,
+            input_name,
+            output_name,
+        })
     }
 }
 
@@ -98,7 +110,7 @@ struct AppState {
 async fn main() -> Result<()> {
     let model_name = std::env::var("MODEL").unwrap_or_else(|_| "resnet50-v1-12-int8".to_string());
     let model_filename = format!("{}.onnx", model_name);
-    
+
     let model_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()

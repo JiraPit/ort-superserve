@@ -261,6 +261,95 @@ mod failure_isolation {
     }
 }
 
+mod worker_failures {
+    use super::*;
+
+    #[tokio::test]
+    async fn worker_survives_a_panic_while_processing_a_batch() {
+        let model = ModelFixture::squeezing();
+        let config = ServerConfig::new()
+            .with_num_sessions(1)
+            .with_max_batch_size(2)
+            .with_max_wait_time(Duration::from_millis(200));
+        let server = start_server(&model, config).await;
+
+        // A lone request squeezes to a scalar output with no batch axis, which
+        // panics the worker while it slices the batch.
+        let lone = server.infer(TestInput::from_values(vec![1.0])).await;
+        // A batch of two keeps its batch axis; the only worker must still serve it.
+        let (a, b) = tokio::join!(
+            server.infer(TestInput::from_values(vec![2.0])),
+            server.infer(TestInput::from_values(vec![3.0])),
+        );
+
+        assert!(error_message(lone).contains("worker returned no result"));
+        assert_eq!(a.unwrap(), TestOutput(vec![2.0]));
+        assert_eq!(b.unwrap(), TestOutput(vec![3.0]));
+    }
+
+    #[tokio::test]
+    async fn startup_fails_when_a_worker_session_cannot_be_built() {
+        use ort_superserve::ExecutionProvider;
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let model = ModelFixture::doubling();
+        // The first build (used to detect tensor names) succeeds; every worker's
+        // build then fails because ONNX Runtime rejects an empty config key.
+        let builds = Arc::new(AtomicUsize::new(0));
+        let config = ServerConfig::new()
+            .with_num_sessions(2)
+            .with_environment(env())
+            .with_execution_provider(ExecutionProvider::Custom(Arc::new(move |builder| {
+                if builds.fetch_add(1, Ordering::SeqCst) == 0 {
+                    Ok(builder)
+                } else {
+                    Ok(builder.with_config_entry("", "value")?)
+                }
+            })));
+
+        let result = tokio::time::timeout(
+            Duration::from_secs(30),
+            Server::<TestInput, TestOutput>::from_file(model.path(), config),
+        )
+        .await
+        .expect("startup must fail instead of waiting on a broken worker");
+
+        let message = format!("{:#}", result.err().expect("expected startup failure"));
+        assert!(
+            message.contains("failed to initialize its session"),
+            "unexpected error: {message}"
+        );
+    }
+}
+
+mod shutdown {
+    use super::*;
+
+    #[tokio::test]
+    async fn clones_keep_serving_after_another_handle_shuts_down() {
+        let model = ModelFixture::doubling();
+        let server = start_server(&model, single_batch_config(2)).await;
+        let clone = server.clone();
+
+        // Queue a request on the clone (it waits for the batch window), then
+        // shut down the original handle while it is in flight.
+        let in_flight = tokio::spawn(async move {
+            let result = clone.infer(TestInput::seq(1.0)).await;
+            (result, clone)
+        });
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        server.shutdown();
+
+        let (result, clone) = in_flight.await.unwrap();
+        assert_eq!(result.unwrap(), doubled_seq(1.0));
+        assert_eq!(
+            clone.infer(TestInput::seq(2.0)).await.unwrap(),
+            doubled_seq(2.0)
+        );
+    }
+}
+
 mod eager_preprocessing {
     use super::*;
 
@@ -387,6 +476,24 @@ mod model_outputs {
 mod loading {
     use super::*;
     use axum::{Router, http::StatusCode, routing::get};
+    use std::collections::HashSet;
+    use std::path::PathBuf;
+
+    /// Serializes tests that download a model, so each can check the temp
+    /// directory for files left behind by its own download.
+    static DOWNLOAD_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+    fn downloaded_model_files() -> HashSet<PathBuf> {
+        std::fs::read_dir(std::env::temp_dir())
+            .unwrap()
+            .filter_map(|entry| entry.ok().map(|e| e.path()))
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n.starts_with("ort-superserve-model-"))
+            })
+            .collect()
+    }
 
     /// Serves `bytes` at `/model.onnx` on a random local port; everything
     /// else returns 404.
@@ -411,6 +518,7 @@ mod loading {
 
     #[tokio::test]
     async fn model_downloaded_from_url_serves_requests() {
+        let _download = DOWNLOAD_LOCK.lock().await;
         let base = serve_model(common::onnx::doubling_model()).await;
         let config = ServerConfig::new().with_max_wait_time(Duration::from_millis(5));
 
@@ -439,6 +547,39 @@ mod loading {
 
         let message = format!("{:#}", result.err().expect("expected download failure"));
         assert!(message.contains(&StatusCode::NOT_FOUND.as_u16().to_string()));
+    }
+
+    #[tokio::test]
+    async fn downloaded_model_file_is_removed_after_startup() {
+        let _download = DOWNLOAD_LOCK.lock().await;
+        let base = serve_model(common::onnx::doubling_model()).await;
+        let before = downloaded_model_files();
+
+        let server = Server::<TestInput, TestOutput>::from_url(
+            &format!("{base}/model.onnx"),
+            ServerConfig::new().with_environment(env()),
+        )
+        .await
+        .expect("Failed to start server from URL");
+
+        assert!(downloaded_model_files().is_subset(&before));
+        drop(server);
+    }
+
+    #[tokio::test]
+    async fn downloaded_model_file_is_removed_when_startup_fails() {
+        let _download = DOWNLOAD_LOCK.lock().await;
+        let base = serve_model(b"not an onnx model".to_vec()).await;
+        let before = downloaded_model_files();
+
+        let result = Server::<TestInput, TestOutput>::from_url(
+            &format!("{base}/model.onnx"),
+            ServerConfig::new().with_environment(env()),
+        )
+        .await;
+
+        assert!(result.is_err());
+        assert!(downloaded_model_files().is_subset(&before));
     }
 }
 
