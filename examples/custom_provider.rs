@@ -44,9 +44,7 @@ async fn main() -> Result<()> {
     let custom_provider = ExecutionProvider::Custom(Arc::new(|builder| {
         builder
             .with_memory_pattern(true)?
-            .with_execution_providers([
-                ort::execution_providers::CPUExecutionProvider::default().build()
-            ])
+            .with_execution_providers([ort::ep::CPU::default().build()])
     }));
 
     let config = ServerConfig::new()

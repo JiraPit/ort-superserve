@@ -1,4 +1,5 @@
 use crate::config::{ExecutionProvider, ServerConfig};
+use crate::environment::Environment;
 use anyhow::Result;
 use ort::session::Session;
 
@@ -16,6 +17,7 @@ impl SessionBuilder {
     ///
     /// # Arguments
     ///
+    /// * `environment` - ONNX Runtime environment to create the session in.
     /// * `model_path` - Path to the ONNX model file.
     /// * `config` - Server configuration containing session settings.
     ///
@@ -27,8 +29,13 @@ impl SessionBuilder {
     ///
     /// Returns an error if the model file cannot be loaded or if
     /// the requested execution provider is not available.
-    pub fn build(model_path: &str, config: &ServerConfig) -> Result<Session> {
-        let mut builder = Session::builder().map_err(|e| anyhow::Error::msg(e.to_string()))?;
+    pub fn build(
+        environment: &Environment,
+        model_path: &str,
+        config: &ServerConfig,
+    ) -> Result<Session> {
+        let mut builder =
+            Session::builder(environment).map_err(|e| anyhow::Error::msg(e.to_string()))?;
 
         builder = builder
             .with_optimization_level(config.optimization_level)
@@ -61,9 +68,9 @@ impl SessionBuilder {
             ExecutionProvider::Cuda { device_id: _ } => {
                 #[cfg(feature = "cuda")]
                 {
-                    use ort::execution_providers::CUDAExecutionProvider;
+                    use ort::ep::CUDA;
                     builder
-                        .with_execution_providers([CUDAExecutionProvider::default().build()])
+                        .with_execution_providers([CUDA::default().build()])
                         .map_err(|e| anyhow::Error::msg(e.to_string()))
                 }
                 #[cfg(not(feature = "cuda"))]
@@ -79,9 +86,9 @@ impl SessionBuilder {
             } => {
                 #[cfg(feature = "tensorrt")]
                 {
-                    use ort::execution_providers::TensorRTExecutionProvider;
+                    use ort::ep::TensorRT;
                     builder
-                        .with_execution_providers([TensorRTExecutionProvider::default().build()])
+                        .with_execution_providers([TensorRT::default().build()])
                         .map_err(|e| anyhow::Error::msg(e.to_string()))
                 }
                 #[cfg(not(feature = "tensorrt"))]
@@ -94,9 +101,9 @@ impl SessionBuilder {
             ExecutionProvider::Xnnpack => {
                 #[cfg(feature = "xnnpack")]
                 {
-                    use ort::execution_providers::XNNPACKExecutionProvider;
+                    use ort::ep::XNNPACK;
                     builder
-                        .with_execution_providers([XNNPACKExecutionProvider::default().build()])
+                        .with_execution_providers([XNNPACK::default().build()])
                         .map_err(|e| anyhow::Error::msg(e.to_string()))
                 }
                 #[cfg(not(feature = "xnnpack"))]
@@ -109,9 +116,9 @@ impl SessionBuilder {
             ExecutionProvider::CoreML => {
                 #[cfg(feature = "coreml")]
                 {
-                    use ort::execution_providers::CoreMLExecutionProvider;
+                    use ort::ep::CoreML;
                     builder
-                        .with_execution_providers([CoreMLExecutionProvider::default().build()])
+                        .with_execution_providers([CoreML::default().build()])
                         .map_err(|e| anyhow::Error::msg(e.to_string()))
                 }
                 #[cfg(not(feature = "coreml"))]

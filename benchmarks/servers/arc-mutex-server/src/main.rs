@@ -37,7 +37,11 @@ async fn main() -> Result<()> {
         .join(&model_name)
         .join(&model_filename);
 
-    let session = Session::builder()
+    let environment = ort::init()
+        .build()
+        .map_err(|e| anyhow::Error::msg(e.to_string()))?;
+
+    let session = Session::builder(&environment)
         .map_err(|e| anyhow::Error::msg(e.to_string()))?
         .with_optimization_level(GraphOptimizationLevel::Level3)
         .map_err(|e| anyhow::Error::msg(e.to_string()))?

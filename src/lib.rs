@@ -71,6 +71,7 @@
 
 pub mod actor;
 pub mod config;
+pub mod environment;
 pub mod error;
 pub mod helpers;
 pub mod server;
@@ -78,6 +79,7 @@ pub mod session;
 pub mod traits;
 
 pub use config::{ExecutionProvider, ServerConfig, SessionBuilderCallback};
+pub use environment::{Environment, create_env};
 pub use error::Error;
 pub use server::Server;
 pub use traits::{Input, Output};

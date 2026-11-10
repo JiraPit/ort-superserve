@@ -41,7 +41,11 @@ fn get_model_path() -> PathBuf {
 static SESSION: Lazy<Mutex<Session>> = Lazy::new(|| {
     let model_path = get_model_path();
 
-    let session = Session::builder()
+    let environment = ort::init()
+        .build()
+        .expect("Failed to create environment");
+
+    let session = Session::builder(&environment)
         .expect("Failed to create builder")
         .with_optimization_level(GraphOptimizationLevel::Level3)
         .expect("Failed to set optimization")

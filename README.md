@@ -83,7 +83,7 @@ async fn main() -> Result<()> {
 ## Configuration
 
 ```rust
-use ort_superserve::{ServerConfig, ExecutionProvider};
+use ort_superserve::{ServerConfig, ExecutionProvider, create_env};
 use std::time::Duration;
 
 let config = ServerConfig::new()
@@ -92,7 +92,30 @@ let config = ServerConfig::new()
     .with_max_batch_size(16)                           // Maximum batch size
     .with_min_batch_size(1)                            // Minimum batch size
     .with_max_wait_time(Duration::from_millis(10))     // Max wait for batching
-    .with_execution_provider(ExecutionProvider::Cpu);  // CPU execution (default)
+    .with_execution_provider(ExecutionProvider::Cpu)   // CPU execution (default)
+    .with_environment(create_env()?);                  // Optional: shared ONNX Runtime environment
+```
+
+### ONNX Runtime environment
+
+ONNX Runtime allows only one environment per process, and creating a second one is an error.
+
+- **Without `with_environment`**: the server creates its own environment. Convenient for quick tests and single-server programs, but starting a second server this way in the same process fails.
+- **With `with_environment(env)`**: create the environment once with `create_env()` (at startup or lazily) and give a clone to every server. Servers can then be created, dropped and recreated freely.
+
+```rust
+use ort_superserve::create_env;
+
+let env = create_env()?; // once per process
+
+let detector = Server::<ImageInput, Detections>::from_file(
+    "detector.onnx",
+    ServerConfig::new().with_environment(env.clone()),
+).await?;
+let classifier = Server::<ImageInput, Classes>::from_file(
+    "classifier.onnx",
+    ServerConfig::new().with_environment(env.clone()),
+).await?;
 ```
 
 ## Loading Models
@@ -112,6 +135,7 @@ Share the server across all HTTP handlers using `Arc`:
 ```rust
 use std::sync::Arc;
 use axum::{Router, routing::post, Json, extract::State};
+use ort_superserve::{Server, create_env};
 
 async fn infer_handler(
     State(server): State<Arc<Server<MyInput, MyOutput>>>,
@@ -122,7 +146,8 @@ async fn infer_handler(
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let server = Arc::new(Server::from_file("model.onnx", config).await?);
+    let env = create_env()?;
+    let server = Arc::new(Server::from_file("model.onnx", config.with_environment(env)).await?);
     
     let app = Router::new()
         .route("/infer", post(infer_handler))

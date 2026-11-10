@@ -1,5 +1,6 @@
 use crate::actor::{BatcherTask, Command, WorkerMessage, WorkerTask};
 use crate::config::ServerConfig;
+use crate::environment::{Environment, create_env};
 use crate::session::SessionBuilder;
 use crate::traits::{Input, Output};
 use anyhow::{Context, Result};
@@ -77,7 +78,8 @@ impl<I: Input, O: Output> Server<I, O> {
     /// # Arguments
     ///
     /// * `path` - Path to the ONNX model file.
-    /// * `config` - Server configuration.
+    /// * `config` - Server configuration. If it has no environment (see
+    ///   [`ServerConfig::with_environment`]), the server creates its own.
     ///
     /// # Returns
     ///
@@ -85,12 +87,14 @@ impl<I: Input, O: Output> Server<I, O> {
     ///
     /// # Errors
     ///
-    /// Returns an error if the model file cannot be loaded or the session
-    /// fails to initialize.
+    /// Returns an error if the model file cannot be loaded, the session
+    /// fails to initialize, or the config has no environment and one
+    /// already exists in this process.
     pub async fn from_file<P: AsRef<Path>>(path: P, config: ServerConfig) -> Result<Self> {
+        let environment = Self::resolve_environment(&config)?;
         let path_str = path.as_ref().to_string_lossy().to_string();
 
-        let session = SessionBuilder::build(&path_str, &config)
+        let session = SessionBuilder::build(&environment, &path_str, &config)
             .map_err(|e| anyhow::Error::msg(e.to_string()))?;
 
         let input_name: Arc<str> = match config.input_name {
@@ -113,7 +117,7 @@ impl<I: Input, O: Output> Server<I, O> {
 
         drop(session);
 
-        Self::start(path_str, config, input_name, output_name)
+        Self::start(environment, path_str, config, input_name, output_name)
     }
 
     /// Download a model from a URL and start the inference server.
@@ -123,7 +127,8 @@ impl<I: Input, O: Output> Server<I, O> {
     /// # Arguments
     ///
     /// * `url` - URL to download the ONNX model from.
-    /// * `config` - Server configuration.
+    /// * `config` - Server configuration. If it has no environment (see
+    ///   [`ServerConfig::with_environment`]), the server creates its own.
     ///
     /// # Returns
     ///
@@ -131,8 +136,11 @@ impl<I: Input, O: Output> Server<I, O> {
     ///
     /// # Errors
     ///
-    /// Returns an error if the download fails or the model cannot be loaded.
+    /// Returns an error if the download fails, the model cannot be loaded,
+    /// or the config has no environment and one already exists in this
+    /// process.
     pub async fn from_url(url: &str, config: ServerConfig) -> Result<Self> {
+        let environment = Self::resolve_environment(&config)?;
         let temp_dir = std::env::temp_dir();
         let model_path = temp_dir.join(format!(
             "ort-superserve-model-{}.onnx",
@@ -160,7 +168,7 @@ impl<I: Input, O: Output> Server<I, O> {
 
         tracing::info!("Model downloaded successfully.");
 
-        let session = SessionBuilder::build(&model_path_str, &config)
+        let session = SessionBuilder::build(&environment, &model_path_str, &config)
             .map_err(|e| anyhow::Error::msg(e.to_string()))?;
 
         let input_name: Arc<str> = match config.input_name {
@@ -183,7 +191,15 @@ impl<I: Input, O: Output> Server<I, O> {
 
         drop(session);
 
-        Self::start(model_path_str, config, input_name, output_name)
+        Self::start(environment, model_path_str, config, input_name, output_name)
+    }
+
+    /// Use the configured environment, or create one if none was given.
+    fn resolve_environment(config: &ServerConfig) -> Result<Environment> {
+        match &config.environment {
+            Some(environment) => Ok(environment.clone()),
+            None => create_env(),
+        }
     }
 
     /// Start the server with the given configuration.
@@ -191,6 +207,7 @@ impl<I: Input, O: Output> Server<I, O> {
     /// Spawns worker threads for ONNX sessions and a batcher task for
     /// collecting and dispatching requests.
     fn start(
+        environment: Environment,
         model_path: String,
         config: ServerConfig,
         input_name: Arc<str>,
@@ -209,6 +226,7 @@ impl<I: Input, O: Output> Server<I, O> {
 
             WorkerTask::spawn(
                 worker_rx,
+                environment.clone(),
                 Arc::clone(&model_path),
                 Arc::clone(&config),
                 worker_id,

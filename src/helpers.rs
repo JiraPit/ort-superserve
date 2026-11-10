@@ -44,48 +44,29 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ndarray::{Array1, Array2, Array3};
+    use ndarray::{Array1, Array2, array};
 
     #[test]
-    fn test_batch_array_single() {
-        let items = vec![Array3::<f32>::zeros((3, 224, 224))];
-        let batched = batch_array(&items).unwrap();
-        assert_eq!(batched.shape(), &[1, 3, 224, 224]);
-    }
-
-    #[test]
-    fn test_batch_array_multiple() {
+    fn stacks_items_along_new_leading_axis_in_order() {
         let items = vec![
-            Array3::<f32>::zeros((3, 224, 224)),
-            Array3::<f32>::ones((3, 224, 224)),
+            Array2::<f32>::from_elem((2, 3), 1.0),
+            Array2::<f32>::from_elem((2, 3), 2.0),
         ];
         let batched = batch_array(&items).unwrap();
-        assert_eq!(batched.shape(), &[2, 3, 224, 224]);
+        assert_eq!(batched.shape(), &[2, 2, 3]);
+        assert_eq!(batched[[0, 1, 2]], 1.0);
+        assert_eq!(batched[[1, 0, 0]], 2.0);
     }
 
     #[test]
-    fn test_batch_array_empty() {
-        let items: Vec<Array3<f32>> = vec![];
-        let result = batch_array(&items);
-        assert!(result.is_err());
+    fn rejects_empty_input() {
+        let items: Vec<Array1<f32>> = vec![];
+        assert!(batch_array(&items).is_err());
     }
 
     #[test]
-    fn test_batch_array_1d() {
-        let items = vec![
-            Array1::<f32>::from_vec(vec![1.0, 2.0]),
-            Array1::<f32>::from_vec(vec![3.0, 4.0]),
-        ];
-        let batched = batch_array(&items).unwrap();
-        assert_eq!(batched.shape(), &[2, 2]);
-        assert_eq!(batched[[0, 0]], 1.0);
-        assert_eq!(batched[[1, 1]], 4.0);
-    }
-
-    #[test]
-    fn test_batch_array_2d() {
-        let items = vec![Array2::<f32>::zeros((4, 5)), Array2::<f32>::ones((4, 5))];
-        let batched = batch_array(&items).unwrap();
-        assert_eq!(batched.shape(), &[2, 4, 5]);
+    fn rejects_items_with_different_shapes() {
+        let items = vec![array![1.0f32, 2.0], array![1.0f32, 2.0, 3.0]];
+        assert!(batch_array(&items).is_err());
     }
 }

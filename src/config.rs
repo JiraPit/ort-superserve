@@ -1,3 +1,4 @@
+use crate::environment::Environment;
 use ort::session::builder::GraphOptimizationLevel;
 use std::sync::Arc;
 use std::time::Duration;
@@ -199,6 +200,14 @@ pub struct ServerConfig {
     /// `JoinSet` in the batcher, which is more memory-efficient but may have
     /// higher latency.
     pub preprocess_on_infer: bool,
+
+    /// ONNX Runtime environment to create sessions in.
+    ///
+    /// ONNX Runtime allows only one environment per process. If not specified,
+    /// the server creates its own, which fails if this process already has one.
+    /// Applications with several servers (or that recreate servers) should create
+    /// one with [`create_env`](crate::create_env) and pass a clone to each.
+    pub environment: Option<Environment>,
 }
 
 impl Default for ServerConfig {
@@ -214,6 +223,7 @@ impl Default for ServerConfig {
             input_name: None,
             output_name: None,
             preprocess_on_infer: false,
+            environment: None,
         }
     }
 }
@@ -309,5 +319,91 @@ impl ServerConfig {
     pub fn with_preprocess_on_infer(mut self, enabled: bool) -> Self {
         self.preprocess_on_infer = enabled;
         self
+    }
+
+    /// Set the ONNX Runtime environment to create sessions in.
+    ///
+    /// Create it once with [`create_env`](crate::create_env) and pass a clone
+    /// to every server. If not set, the server creates its own environment,
+    /// which fails if this process already has one.
+    pub fn with_environment(mut self, environment: Environment) -> Self {
+        self.environment = Some(environment);
+        self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_config_values() {
+        let config = ServerConfig::default();
+
+        assert_eq!(config.num_sessions, 1);
+        assert_eq!(config.threads_per_session, 1);
+        assert_eq!(config.max_batch_size, 8);
+        assert_eq!(config.min_batch_size, 1);
+        assert_eq!(config.max_wait_time, Duration::from_millis(10));
+        assert!(matches!(
+            config.execution_providers[..],
+            [ExecutionProvider::Cpu]
+        ));
+        assert_eq!(config.optimization_level, GraphOptimizationLevel::Level3);
+        assert_eq!(config.input_name, None);
+        assert_eq!(config.output_name, None);
+        assert!(!config.preprocess_on_infer);
+        assert!(config.environment.is_none());
+    }
+
+    #[test]
+    fn builder_methods_set_their_fields() {
+        let config = ServerConfig::new()
+            .with_num_sessions(4)
+            .with_threads_per_session(2)
+            .with_max_batch_size(16)
+            .with_min_batch_size(2)
+            .with_max_wait_time(Duration::from_millis(20))
+            .with_optimization_level(GraphOptimizationLevel::Level1)
+            .with_input_name("input_tensor")
+            .with_output_name("output_tensor")
+            .with_preprocess_on_infer(true);
+
+        assert_eq!(config.num_sessions, 4);
+        assert_eq!(config.threads_per_session, 2);
+        assert_eq!(config.max_batch_size, 16);
+        assert_eq!(config.min_batch_size, 2);
+        assert_eq!(config.max_wait_time, Duration::from_millis(20));
+        assert_eq!(config.optimization_level, GraphOptimizationLevel::Level1);
+        assert_eq!(config.input_name.as_deref(), Some("input_tensor"));
+        assert_eq!(config.output_name.as_deref(), Some("output_tensor"));
+        assert!(config.preprocess_on_infer);
+    }
+
+    #[test]
+    fn cloned_custom_provider_shares_the_callback() {
+        let provider = ExecutionProvider::Custom(Arc::new(Ok));
+
+        match (&provider, &provider.clone()) {
+            (ExecutionProvider::Custom(a), ExecutionProvider::Custom(b)) => {
+                assert!(Arc::ptr_eq(a, b))
+            }
+            _ => panic!("clone changed the provider variant"),
+        }
+    }
+
+    #[test]
+    fn debug_output_hides_custom_callback() {
+        let provider = ExecutionProvider::Custom(Arc::new(Ok));
+        let tensorrt = ExecutionProvider::TensorRT {
+            device_id: 1,
+            fp16: true,
+        };
+
+        assert_eq!(format!("{provider:?}"), "Custom(<callback>)");
+        assert_eq!(
+            format!("{tensorrt:?}"),
+            "TensorRT { device_id: 1, fp16: true }"
+        );
     }
 }

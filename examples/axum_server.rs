@@ -8,7 +8,7 @@ use axum::{
     routing::{get, post},
 };
 use ndarray::{Array1, ArrayD, ArrayViewD};
-use ort_superserve::{Input, Output, Server, ServerConfig, helpers::batch_array};
+use ort_superserve::{Input, Output, Server, ServerConfig, create_env, helpers::batch_array};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::signal;
@@ -86,7 +86,17 @@ async fn main() -> Result<()> {
         .with_threads_per_session(2)
         .with_max_batch_size(16);
 
-    let server = Arc::new(Server::<ArrayInput, ArrayOutput>::from_file(&model_path, config).await?);
+    // Create the ONNX Runtime environment once per process and give a clone to
+    // every server, so servers can be added, dropped and recreated freely.
+    let env = create_env()?;
+
+    let server = Arc::new(
+        Server::<ArrayInput, ArrayOutput>::from_file(
+            &model_path,
+            config.with_environment(env.clone()),
+        )
+        .await?,
+    );
 
     println!("Listening on http://0.0.0.0:3000");
 

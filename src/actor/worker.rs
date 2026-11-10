@@ -1,4 +1,5 @@
 use crate::config::ServerConfig;
+use crate::environment::Environment;
 use crate::session::SessionBuilder;
 use anyhow::Result;
 use ndarray::{ArrayD, IxDyn};
@@ -24,6 +25,7 @@ impl WorkerTask {
     /// # Arguments
     ///
     /// * `worker_rx` - Dedicated receiver for this worker's messages.
+    /// * `environment` - ONNX Runtime environment to create the session in.
     /// * `model_path` - Path to the ONNX model file.
     /// * `config` - Server configuration.
     /// * `worker_id` - Unique identifier for logging.
@@ -33,6 +35,7 @@ impl WorkerTask {
     /// A `JoinHandle` for the spawned thread.
     pub fn spawn(
         worker_rx: kanal::AsyncReceiver<WorkerMessage>,
+        environment: Environment,
         model_path: Arc<String>,
         config: Arc<ServerConfig>,
         worker_id: usize,
@@ -42,7 +45,7 @@ impl WorkerTask {
 
             // Initialize session with retry on failure
             let mut session = loop {
-                match SessionBuilder::build(&model_path, &config) {
+                match SessionBuilder::build(&environment, &model_path, &config) {
                     Ok(s) => break s,
                     Err(e) => {
                         tracing::error!(

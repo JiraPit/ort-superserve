@@ -8,6 +8,7 @@ use actix::{Actor, Addr, Handler, Message, SyncArbiter, SyncContext};
 use anyhow::Result;
 use axum::{Json, Router, extract::State, routing::post};
 use ort::{
+    environment::Environment,
     session::{Session, SessionInputValue, SessionInputs, builder::GraphOptimizationLevel},
     value::Value,
 };
@@ -28,8 +29,8 @@ impl Actor for InferenceActor {
 
 impl InferenceActor {
     /// Creates a new inference actor with the given model.
-    fn new(model_path: &PathBuf) -> Result<Self> {
-        let session = Session::builder()
+    fn new(environment: &Environment, model_path: &PathBuf) -> Result<Self> {
+        let session = Session::builder(environment)
             .map_err(|e| anyhow::Error::msg(e.to_string()))?
             .with_optimization_level(GraphOptimizationLevel::Level3)
             .map_err(|e| anyhow::Error::msg(e.to_string()))?
@@ -109,9 +110,13 @@ async fn main() -> Result<()> {
         .join(&model_name)
         .join(&model_filename);
 
+    let environment = ort::init()
+        .build()
+        .map_err(|e| anyhow::Error::msg(e.to_string()))?;
+
     let model_path_clone = model_path.clone();
     let actor = SyncArbiter::start(1, move || {
-        InferenceActor::new(&model_path_clone).expect("Failed to create actor")
+        InferenceActor::new(&environment, &model_path_clone).expect("Failed to create actor")
     });
 
     let state = Arc::new(AppState { actor });
