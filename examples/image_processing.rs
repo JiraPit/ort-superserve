@@ -27,8 +27,9 @@ impl ImageInput {
 
 impl Input for ImageInput {
     type Preprocessed = Array3<f32>;
+    type Context = ();
 
-    async fn preprocess(self) -> Result<Self::Preprocessed> {
+    async fn preprocess(self) -> Result<(Self::Preprocessed, Self::Context)> {
         tokio::task::spawn_blocking(move || {
             let target_height = 224;
             let target_width = 224;
@@ -50,7 +51,7 @@ impl Input for ImageInput {
                 }
             }
 
-            Ok(data)
+            Ok((data, ()))
         })
         .await?
     }
@@ -67,7 +68,7 @@ struct ClassificationOutput {
 }
 
 impl Output for ClassificationOutput {
-    async fn postprocess(raw: ArrayViewD<'_, f32>) -> Result<Self> {
+    async fn postprocess(raw: ArrayViewD<'_, f32>, _context: ()) -> Result<Self> {
         // `raw` holds the class scores for this one image (batch axis already removed).
         let (class_id, &confidence) = raw
             .iter()

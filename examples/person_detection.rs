@@ -20,10 +20,18 @@ impl PersonDetectionInput {
     }
 }
 
-impl Input for PersonDetectionInput {
-    type Preprocessed = (Array3<f32>, (u32, u32));
+/// Sizes needed to map detections from model space back onto the original image.
+#[derive(Debug, Clone, Copy)]
+pub struct ImageScale {
+    pub original: (u32, u32),
+    pub model_input: (u32, u32),
+}
 
-    async fn preprocess(self) -> Result<Self::Preprocessed> {
+impl Input for PersonDetectionInput {
+    type Preprocessed = Array3<f32>;
+    type Context = ImageScale;
+
+    async fn preprocess(self) -> Result<(Self::Preprocessed, Self::Context)> {
         tokio::task::spawn_blocking(move || {
             let (target_w, target_h) = self.target_size;
             let (orig_w, orig_h) = self.image.dimensions();
@@ -43,13 +51,17 @@ impl Input for PersonDetectionInput {
                 }
             }
 
-            Ok((array, (orig_w, orig_h)))
+            let scale = ImageScale {
+                original: (orig_w, orig_h),
+                model_input: (target_w, target_h),
+            };
+            Ok((array, scale))
         })
         .await?
     }
 
     fn batch(items: Vec<Self::Preprocessed>) -> Result<ArrayD<f32>> {
-        let tensors: Vec<_> = items.iter().map(|(t, _)| t.view()).collect();
+        let tensors: Vec<_> = items.iter().map(|t| t.view()).collect();
         let batched = ndarray::stack(Axis(0), &tensors)?;
         Ok(batched.into_dyn())
     }
@@ -73,8 +85,8 @@ pub struct PersonDetectionOutput {
 
 pub struct PersonDetectionBatcher;
 
-impl Output for PersonDetectionOutput {
-    async fn postprocess(raw: ArrayViewD<'_, f32>) -> Result<Self> {
+impl Output<ImageScale> for PersonDetectionOutput {
+    async fn postprocess(raw: ArrayViewD<'_, f32>, scale: ImageScale) -> Result<Self> {
         let shape = raw.shape().to_vec();
         let num_anchors = shape[1];
 
@@ -87,6 +99,12 @@ impl Output for PersonDetectionOutput {
 
             let conf_threshold = 0.5;
 
+            // Boxes come out in model-input pixels; scale them to the original image.
+            let (orig_w, orig_h) = scale.original;
+            let (input_w, input_h) = scale.model_input;
+            let sx = orig_w as f32 / input_w as f32;
+            let sy = orig_h as f32 / input_h as f32;
+
             for i in 0..num_anchors {
                 let score = raw_2d[[4, i]];
 
@@ -97,10 +115,10 @@ impl Output for PersonDetectionOutput {
                     let h = raw_2d[[3, i]];
 
                     detections.push(BoundingBox {
-                        x1: cx - w / 2.0,
-                        y1: cy - h / 2.0,
-                        x2: cx + w / 2.0,
-                        y2: cy + h / 2.0,
+                        x1: (cx - w / 2.0) * sx,
+                        y1: (cy - h / 2.0) * sy,
+                        x2: (cx + w / 2.0) * sx,
+                        y2: (cy + h / 2.0) * sy,
                         confidence: score,
                         label: "person".to_string(),
                     });
@@ -111,7 +129,7 @@ impl Output for PersonDetectionOutput {
 
             Ok(PersonDetectionOutput {
                 detections,
-                original_dims: (640, 640),
+                original_dims: scale.original,
             })
         })
         .await?

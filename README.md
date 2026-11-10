@@ -18,7 +18,7 @@ Orchestrates a pool of ONNX sessions with dynamic batching and parallel processi
 
 [`ort`]: https://crates.io/crates/ort
 
-- **Works with all input/output types**: The `Input` and `Output` traits let you define custom preprocessing and postprocessing logic for any data type—images, text, audio, video, or complex structs. You implement `preprocess`, `batch`, and `postprocess`; the library handles the orchestration.
+- **Works with all input/output types**: The `Input` and `Output` traits let you define custom preprocessing and postprocessing logic for any data type—images, text, audio, video, or complex structs. You implement `preprocess`, `batch`, and `postprocess`; the library handles the orchestration, including passing per-request context (like the original image size) from preprocessing to postprocessing.
 
 - **Session pool**: On multi-core servers, scaling a single ONNX session with more threads hits diminishing returns due to lock contention and memory bandwidth limits. A session pool runs multiple independent sessions in parallel, each with fewer threads, achieving near-linear scaling with core count. This is essential for high-throughput serving on modern hardware.
 
@@ -38,10 +38,11 @@ struct MyInput {
 
 impl Input for MyInput {
     type Preprocessed = Array3<f32>;
+    type Context = ();
 
-    async fn preprocess(self) -> Result<Self::Preprocessed> {
+    async fn preprocess(self) -> Result<(Self::Preprocessed, Self::Context)> {
         // Your preprocessing logic (runs in parallel)
-        Ok(self.data)
+        Ok((self.data, ()))
     }
 
     fn batch(items: Vec<Self::Preprocessed>) -> Result<ArrayD<f32>> {
@@ -55,7 +56,7 @@ struct MyOutput {
 }
 
 impl Output for MyOutput {
-    async fn postprocess(raw: ArrayViewD<'_, f32>) -> Result<Self> {
+    async fn postprocess(raw: ArrayViewD<'_, f32>, _context: ()) -> Result<Self> {
         // Your postprocessing logic (runs in parallel)
         Ok(MyOutput {
             scores: raw.iter().cloned().collect(),
@@ -84,6 +85,38 @@ async fn main() -> Result<()> {
     Ok(())
 }
 ```
+
+## Per-request context
+
+Postprocessing often needs to know something about the original request, such as the original image size to map detections back from the model's input resolution. `preprocess` returns that alongside the tensor data as the input's `Context`; the library keeps it out of the batch and hands it to the same request's `postprocess`.
+
+```rust
+struct ImageScale { original: (u32, u32), model_input: (u32, u32) }
+
+impl Input for DetectionInput {
+    type Preprocessed = Array3<f32>;   // stacked into the batch tensor
+    type Context = ImageScale;         // delivered to this request's postprocess
+
+    async fn preprocess(self) -> Result<(Self::Preprocessed, Self::Context)> {
+        let original = self.image.dimensions();
+        let tensor = resize_and_normalize(&self.image, (640, 640));
+        Ok((tensor, ImageScale { original, model_input: (640, 640) }))
+    }
+
+    fn batch(items: Vec<Self::Preprocessed>) -> Result<ArrayD<f32>> {
+        batch_array(&items)
+    }
+}
+
+impl Output<ImageScale> for Detections {
+    async fn postprocess(raw: ArrayViewD<'_, f32>, scale: ImageScale) -> Result<Self> {
+        // Decode boxes in model space, then rescale them with `scale`
+        decode_boxes(raw, scale)
+    }
+}
+```
+
+Use `type Context = ();` when postprocessing needs nothing; `Output` defaults to `Output<()>`. See `examples/person_detection.rs` for a complete example.
 
 ## Configuration
 

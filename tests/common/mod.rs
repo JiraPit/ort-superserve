@@ -104,6 +104,8 @@ pub struct TestInput {
     pub values: Vec<f32>,
     pub behavior: Behavior,
     pub recorder: BatchRecorder,
+    /// Passed through preprocessing as this request's context.
+    pub tag: u32,
 }
 
 impl TestInput {
@@ -117,6 +119,7 @@ impl TestInput {
             values,
             behavior: Behavior::Succeed,
             recorder: BatchRecorder::default(),
+            tag: 0,
         }
     }
 
@@ -134,6 +137,11 @@ impl TestInput {
         self.recorder = recorder.clone();
         self
     }
+
+    pub fn with_tag(mut self, tag: u32) -> Self {
+        self.tag = tag;
+        self
+    }
 }
 
 pub struct Prepared {
@@ -144,16 +152,20 @@ pub struct Prepared {
 
 impl Input for TestInput {
     type Preprocessed = Prepared;
+    type Context = u32;
 
-    async fn preprocess(self) -> Result<Self::Preprocessed> {
+    async fn preprocess(self) -> Result<(Self::Preprocessed, Self::Context)> {
         match self.behavior {
             Behavior::FailPreprocess => anyhow::bail!("injected preprocess failure"),
             Behavior::PanicPreprocess => panic!("injected preprocess panic"),
-            Behavior::Succeed | Behavior::FailBatch => Ok(Prepared {
-                values: Array1::from_vec(self.values),
-                fail_batch: matches!(self.behavior, Behavior::FailBatch),
-                recorder: self.recorder,
-            }),
+            Behavior::Succeed | Behavior::FailBatch => Ok((
+                Prepared {
+                    values: Array1::from_vec(self.values),
+                    fail_batch: matches!(self.behavior, Behavior::FailBatch),
+                    recorder: self.recorder,
+                },
+                self.tag,
+            )),
         }
     }
 
@@ -172,8 +184,9 @@ impl Input for TestInput {
 #[derive(Debug, PartialEq)]
 pub struct TestOutput(pub Vec<f32>);
 
-impl Output for TestOutput {
-    async fn postprocess(raw: ArrayViewD<'_, f32>) -> Result<Self> {
+/// Output that ignores the request context.
+impl Output<u32> for TestOutput {
+    async fn postprocess(raw: ArrayViewD<'_, f32>, _tag: u32) -> Result<Self> {
         let values: Vec<f32> = raw.iter().copied().collect();
         match values.first() {
             Some(&v) if v == POSTPROCESS_ERROR_MARKER => {
@@ -185,10 +198,33 @@ impl Output for TestOutput {
     }
 }
 
+/// Output that records which request context its postprocessing received.
+#[derive(Debug, PartialEq)]
+pub struct TaggedOutput {
+    pub values: Vec<f32>,
+    pub tag: u32,
+}
+
+impl Output<u32> for TaggedOutput {
+    async fn postprocess(raw: ArrayViewD<'_, f32>, tag: u32) -> Result<Self> {
+        Ok(TaggedOutput {
+            values: raw.iter().copied().collect(),
+            tag,
+        })
+    }
+}
+
 pub async fn start_server(
     model: &ModelFixture,
     config: ServerConfig,
 ) -> Server<TestInput, TestOutput> {
+    start_server_with_output(model, config).await
+}
+
+pub async fn start_server_with_output<O: Output<u32>>(
+    model: &ModelFixture,
+    config: ServerConfig,
+) -> Server<TestInput, O> {
     Server::from_file(model.path(), config.with_environment(env()))
         .await
         .expect("Failed to start server")

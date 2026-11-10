@@ -18,7 +18,9 @@
 //!   supporting all execution providers: CPU (default), CUDA, TensorRT, XNNPACK,
 //!   and CoreML.
 //! - **Works with all input/output types**: The `Input` and `Output` traits let you
-//!   define custom preprocessing and postprocessing logic for any data type.
+//!   define custom preprocessing and postprocessing logic for any data type, with
+//!   per-request context (like the original image size) passed from preprocessing
+//!   to postprocessing.
 //! - **Session pool**: Multiple ONNX sessions run in parallel, each with fewer
 //!   threads, achieving near-linear scaling with core count.
 //! - **Parallel pre/post-processing**: Preprocessing and postprocessing run
@@ -38,9 +40,10 @@
 //!
 //! impl Input for ImageInput {
 //!     type Preprocessed = Array3<f32>;
+//!     type Context = ();
 //!
-//!     async fn preprocess(self) -> Result<Self::Preprocessed> {
-//!         Ok(self.data)
+//!     async fn preprocess(self) -> Result<(Self::Preprocessed, Self::Context)> {
+//!         Ok((self.data, ()))
 //!     }
 //!
 //!     fn batch(items: Vec<Self::Preprocessed>) -> Result<ArrayD<f32>> {
@@ -51,7 +54,7 @@
 //! struct DetectionOutput { scores: Vec<f32> }
 //!
 //! impl Output for DetectionOutput {
-//!     async fn postprocess(raw: ArrayViewD<'_, f32>) -> Result<Self> {
+//!     async fn postprocess(raw: ArrayViewD<'_, f32>, _context: ()) -> Result<Self> {
 //!         Ok(DetectionOutput { scores: raw.iter().cloned().collect() })
 //!     }
 //! }

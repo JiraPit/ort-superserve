@@ -40,8 +40,9 @@ struct ImageInput {
 
 impl Input for ImageInput {
     type Preprocessed = Array3<f32>;
+    type Context = ();
 
-    async fn preprocess(self) -> Result<Self::Preprocessed> {
+    async fn preprocess(self) -> Result<(Self::Preprocessed, Self::Context)> {
         let decoder = png::Decoder::new(std::io::Cursor::new(self.png_bytes));
         let mut reader = decoder.read_info()?;
         let mut buf = vec![0; reader.output_buffer_size()];
@@ -52,10 +53,11 @@ impl Input for ImageInput {
         let mean = [0.485, 0.456, 0.406];
         let std = [0.229, 0.224, 0.225];
 
-        Ok(Array3::from_shape_fn((3, height, width), |(c, y, x)| {
+        let tensor = Array3::from_shape_fn((3, height, width), |(c, y, x)| {
             let value = buf[(y * width + x) * 3 + c] as f32 / 255.0;
             (value - mean[c]) / std[c]
-        }))
+        });
+        Ok((tensor, ()))
     }
 
     fn batch(items: Vec<Self::Preprocessed>) -> Result<ArrayD<f32>> {
@@ -66,7 +68,7 @@ impl Input for ImageInput {
 struct Logits(Vec<f32>);
 
 impl Output for Logits {
-    async fn postprocess(raw: ArrayViewD<'_, f32>) -> Result<Self> {
+    async fn postprocess(raw: ArrayViewD<'_, f32>, _context: ()) -> Result<Self> {
         Ok(Logits(raw.iter().copied().collect()))
     }
 }

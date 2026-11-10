@@ -441,3 +441,64 @@ mod loading {
         assert!(message.contains(&StatusCode::NOT_FOUND.as_u16().to_string()));
     }
 }
+
+mod request_context {
+    use super::*;
+
+    fn tagged_results(results: Vec<anyhow::Result<TaggedOutput>>) -> Vec<Option<(u32, Vec<f32>)>> {
+        results
+            .into_iter()
+            .map(|r| r.ok().map(|o| (o.tag, o.values)))
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn contexts_stay_with_their_requests_when_others_fail_preprocessing() {
+        let model = ModelFixture::doubling();
+        let server = start_server_with_output::<TaggedOutput>(&model, single_batch_config(5)).await;
+
+        // Failures at the front and middle shift every later request's position
+        // in the batch tensor.
+        let behaviors = [
+            Behavior::FailPreprocess,
+            Behavior::Succeed,
+            Behavior::PanicPreprocess,
+            Behavior::Succeed,
+            Behavior::Succeed,
+        ];
+        let results = join_all(behaviors.iter().enumerate().map(|(i, &behavior)| {
+            server.infer(
+                TestInput::seq(i as f32 * 10.0)
+                    .with_tag(100 + i as u32)
+                    .with_behavior(behavior),
+            )
+        }))
+        .await;
+
+        let expected: Vec<_> = behaviors
+            .iter()
+            .enumerate()
+            .map(|(i, behavior)| {
+                matches!(behavior, Behavior::Succeed)
+                    .then(|| (100 + i as u32, doubled_seq(i as f32 * 10.0).0))
+            })
+            .collect();
+        assert_eq!(tagged_results(results), expected);
+    }
+
+    #[tokio::test]
+    async fn eager_preprocessing_delivers_each_requests_context() {
+        let model = ModelFixture::doubling();
+        let config = single_batch_config(3).with_preprocess_on_infer(true);
+        let server = start_server_with_output::<TaggedOutput>(&model, config).await;
+
+        let results =
+            join_all((0..3).map(|i| server.infer(TestInput::seq(i as f32).with_tag(7 * (i + 1)))))
+                .await;
+
+        let expected: Vec<_> = (0..3)
+            .map(|i| Some((7 * (i + 1), doubled_seq(i as f32).0)))
+            .collect();
+        assert_eq!(tagged_results(results), expected);
+    }
+}

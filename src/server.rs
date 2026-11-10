@@ -16,7 +16,8 @@ use std::sync::Arc;
 /// # Type Parameters
 ///
 /// - `I`: Input type implementing [`Input`] trait
-/// - `O`: Output type implementing [`Output`] trait
+/// - `O`: Output type implementing [`Output<I::Context>`](Output), so its
+///   postprocessing receives the context produced by `I`'s preprocessing
 ///
 /// # Example
 ///
@@ -28,7 +29,8 @@ use std::sync::Arc;
 /// struct MyInput { data: Array3<f32> }
 /// impl Input for MyInput {
 ///     type Preprocessed = Array3<f32>;
-///     async fn preprocess(self) -> Result<Self::Preprocessed> { Ok(self.data) }
+///     type Context = ();
+///     async fn preprocess(self) -> Result<(Self::Preprocessed, Self::Context)> { Ok((self.data, ())) }
 ///     fn batch(items: Vec<Self::Preprocessed>) -> Result<ArrayD<f32>> {
 ///         let views: Vec<_> = items.iter().map(|a| a.view()).collect();
 ///         Ok(ndarray::stack(Axis(0), &views)?.into_dyn())
@@ -37,7 +39,7 @@ use std::sync::Arc;
 ///
 /// struct MyOutput { result: Vec<f32> }
 /// impl Output for MyOutput {
-///     async fn postprocess(raw: ArrayViewD<'_, f32>) -> Result<Self> {
+///     async fn postprocess(raw: ArrayViewD<'_, f32>, _context: ()) -> Result<Self> {
 ///         Ok(MyOutput { result: raw.iter().cloned().collect() })
 ///     }
 /// }
@@ -61,13 +63,13 @@ use std::sync::Arc;
 /// # Ok(())
 /// # }
 /// ```
-pub struct Server<I: Input, O: Output> {
+pub struct Server<I: Input, O: Output<I::Context>> {
     command_tx: kanal::AsyncSender<Command<I, O>>,
     preprocess_on_infer: bool,
     _phantom: std::marker::PhantomData<O>,
 }
 
-impl<I: Input, O: Output> Clone for Server<I, O> {
+impl<I: Input, O: Output<I::Context>> Clone for Server<I, O> {
     fn clone(&self) -> Self {
         Self {
             command_tx: self.command_tx.clone(),
@@ -77,7 +79,7 @@ impl<I: Input, O: Output> Clone for Server<I, O> {
     }
 }
 
-impl<I: Input, O: Output> Server<I, O> {
+impl<I: Input, O: Output<I::Context>> Server<I, O> {
     /// Load a model from a local file and start the inference server.
     ///
     /// # Arguments
@@ -273,9 +275,9 @@ impl<I: Input, O: Output> Server<I, O> {
         let (responder, response) = tokio::sync::oneshot::channel();
 
         if self.preprocess_on_infer {
-            let preprocessed = input.preprocess().await?;
+            let (preprocessed, context) = input.preprocess().await?;
             self.command_tx
-                .send(Command::new_preprocessed(preprocessed, responder))
+                .send(Command::new_preprocessed(preprocessed, context, responder))
                 .await
                 .map_err(|_| anyhow::Error::msg("Server channel closed"))?;
         } else {

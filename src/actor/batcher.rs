@@ -15,7 +15,8 @@ use tokio::task::JoinSet;
 /// 2. Runs preprocessing in parallel using `JoinSet`
 /// 3. Batches preprocessed inputs into a single tensor
 /// 4. Sends batched tensor to worker pool
-/// 5. Receives outputs and runs postprocessing in parallel
+/// 5. Receives outputs and runs postprocessing in parallel, giving each
+///    request the context its preprocessing produced
 /// 6. Sends results back to callers via oneshot channels
 pub struct BatcherTask;
 
@@ -33,7 +34,7 @@ impl BatcherTask {
     /// # Returns
     ///
     /// A `JoinHandle` for the spawned task.
-    pub fn spawn<I: Input, O: Output>(
+    pub fn spawn<I: Input, O: Output<I::Context>>(
         command_rx: kanal::AsyncReceiver<Command<I, O>>,
         worker_txs: Vec<kanal::AsyncSender<WorkerMessage>>,
         config: Arc<ServerConfig>,
@@ -93,14 +94,14 @@ impl BatcherTask {
 
                 // Separate raw and preprocessed inputs
                 let mut raw_inputs: Vec<(usize, I)> = Vec::new();
-                let mut preprocessed_inputs: Vec<(usize, I::Preprocessed)> = Vec::new();
+                let mut preprocessed_inputs = Vec::new();
 
                 for (idx, cmd) in batch_buffer.drain(..).enumerate() {
                     responders.push(cmd.responder);
                     match cmd.input {
                         CommandInput::Raw(input) => raw_inputs.push((idx, input)),
-                        CommandInput::Preprocessed(preprocessed) => {
-                            preprocessed_inputs.push((idx, preprocessed))
+                        CommandInput::Preprocessed(preprocessed, context) => {
+                            preprocessed_inputs.push((idx, (preprocessed, context)))
                         }
                     }
                 }
@@ -116,7 +117,7 @@ impl BatcherTask {
                 }
 
                 // Collect results from preprocessing
-                let mut results: HashMap<usize, I::Preprocessed> = HashMap::new();
+                let mut results: HashMap<usize, (I::Preprocessed, I::Context)> = HashMap::new();
                 let mut failed_indices: Vec<usize> = Vec::new();
 
                 // Add already preprocessed inputs to results
@@ -148,27 +149,24 @@ impl BatcherTask {
                     tracing::error!("Batcher: {panicked_count} preprocessing tasks panicked");
                 }
 
-                // Track successful indices for responder filtering
-                let success_indices: Vec<usize> = results.keys().cloned().collect();
-
-                // Build preprocessed items in original order
-                let preprocessed_items: Vec<_> = (0..batch_len)
-                    .filter_map(|idx| results.remove(&idx))
-                    .collect();
-
-                // Filter responders: send errors to failed/panicked ones, keep valid ones
-                let responders: Vec<_> = responders
-                    .into_iter()
-                    .enumerate()
-                    .filter_map(|(idx, resp)| {
-                        if success_indices.contains(&idx) {
-                            Some(resp)
-                        } else {
-                            let _ = resp.send(Err(anyhow::Error::msg("Preprocessing failed")));
-                            None
+                // Walk the batch in original order, keeping each successful request's
+                // tensor, context and responder aligned; fail the rest.
+                let mut preprocessed_items = Vec::with_capacity(results.len());
+                let mut contexts = Vec::with_capacity(results.len());
+                let mut kept_responders = Vec::with_capacity(results.len());
+                for (idx, responder) in responders.into_iter().enumerate() {
+                    match results.remove(&idx) {
+                        Some((preprocessed, context)) => {
+                            preprocessed_items.push(preprocessed);
+                            contexts.push(context);
+                            kept_responders.push(responder);
                         }
-                    })
-                    .collect();
+                        None => {
+                            let _ = responder.send(Err(anyhow::Error::msg("Preprocessing failed")));
+                        }
+                    }
+                }
+                let responders = kept_responders;
 
                 if preprocessed_items.is_empty() {
                     tracing::error!("Batcher: All preprocessing tasks failed.");
@@ -244,13 +242,13 @@ impl BatcherTask {
                     continue;
                 }
 
-                // Run postprocessing in parallel
+                // Run postprocessing in parallel, each with its request's context
                 let mut postprocess_tasks = JoinSet::new();
-                for (raw_output, responder) in
-                    sliced_outputs.into_iter().zip(responders.into_iter())
+                for ((raw_output, context), responder) in
+                    sliced_outputs.into_iter().zip(contexts).zip(responders)
                 {
                     postprocess_tasks.spawn(async move {
-                        let result = O::postprocess(raw_output.view()).await;
+                        let result = O::postprocess(raw_output.view(), context).await;
                         let _ = responder.send(result);
                     });
                 }

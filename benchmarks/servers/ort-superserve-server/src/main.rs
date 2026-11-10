@@ -23,14 +23,15 @@ struct MyInput {
 
 impl Input for MyInput {
     type Preprocessed = ArrayD<f32>;
+    type Context = ();
 
     /// Preprocesses the PNG bytes into a normalized tensor.
-    async fn preprocess(self) -> Result<Self::Preprocessed> {
+    async fn preprocess(self) -> Result<(Self::Preprocessed, Self::Context)> {
         let input = ImageInput::from_png_bytes(self.image_bytes);
         let tensor = input.to_input_array()?;
         let tensor =
             tokio::task::spawn_blocking(move || apply_imagenet_normalization(tensor)).await?;
-        Ok(tensor)
+        Ok((tensor, ()))
     }
 
     /// Stacks multiple preprocessed inputs into a batched tensor.
@@ -49,7 +50,7 @@ struct MyOutput {
 
 impl Output for MyOutput {
     /// Postprocesses raw logits into predicted class_id and confidence.
-    async fn postprocess(raw: ArrayViewD<'_, f32>) -> Result<Self> {
+    async fn postprocess(raw: ArrayViewD<'_, f32>, _context: ()) -> Result<Self> {
         let logits: Vec<f32> = raw.iter().copied().collect();
         let output = ImageOutput::from_logits(&logits);
         Ok(MyOutput {

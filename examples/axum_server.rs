@@ -19,10 +19,11 @@ struct ArrayInput {
 
 impl Input for ArrayInput {
     type Preprocessed = Array1<f32>;
+    type Context = ();
 
-    async fn preprocess(self) -> Result<Self::Preprocessed> {
+    async fn preprocess(self) -> Result<(Self::Preprocessed, Self::Context)> {
         // Preprocessing logic goes here
-        Ok(self.data)
+        Ok((self.data, ()))
     }
 
     fn batch(items: Vec<Self::Preprocessed>) -> Result<ArrayD<f32>> {
@@ -36,7 +37,7 @@ struct ArrayOutput {
 }
 
 impl Output for ArrayOutput {
-    async fn postprocess(raw: ArrayViewD<'_, f32>) -> Result<Self> {
+    async fn postprocess(raw: ArrayViewD<'_, f32>, _context: ()) -> Result<Self> {
         // Postprocessing logic goes here
         Ok(ArrayOutput {
             values: raw.iter().cloned().collect(),

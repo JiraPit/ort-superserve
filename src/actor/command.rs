@@ -12,14 +12,14 @@ use crate::traits::{Input, Output};
 /// immediately in `infer()` before being queued.
 pub enum CommandInput<I: Input> {
     Raw(I),
-    Preprocessed(I::Preprocessed),
+    Preprocessed(I::Preprocessed, I::Context),
 }
 
 /// Internal command sent from the server to the batcher.
 ///
 /// Contains the input data and a oneshot channel for sending
 /// the result back to the caller.
-pub struct Command<I: Input, O: Output> {
+pub struct Command<I: Input, O: Output<I::Context>> {
     /// The input to be processed (raw or preprocessed).
     pub input: CommandInput<I>,
     /// Channel for sending the result back to the caller.
@@ -27,7 +27,7 @@ pub struct Command<I: Input, O: Output> {
     _phantom: PhantomData<O>,
 }
 
-impl<I: Input, O: Output> Command<I, O> {
+impl<I: Input, O: Output<I::Context>> Command<I, O> {
     /// Create a new command with a raw input.
     pub fn new_raw(input: I, responder: oneshot::Sender<Result<O>>) -> Self {
         Self {
@@ -37,10 +37,14 @@ impl<I: Input, O: Output> Command<I, O> {
         }
     }
 
-    /// Create a new command with a preprocessed input.
-    pub fn new_preprocessed(input: I::Preprocessed, responder: oneshot::Sender<Result<O>>) -> Self {
+    /// Create a new command with a preprocessed input and its context.
+    pub fn new_preprocessed(
+        input: I::Preprocessed,
+        context: I::Context,
+        responder: oneshot::Sender<Result<O>>,
+    ) -> Self {
         Self {
-            input: CommandInput::Preprocessed(input),
+            input: CommandInput::Preprocessed(input, context),
             responder,
             _phantom: PhantomData,
         }

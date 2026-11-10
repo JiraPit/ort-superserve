@@ -50,8 +50,9 @@ impl AudioInput {
 
 impl Input for AudioInput {
     type Preprocessed = Array1<f32>;
+    type Context = ();
 
-    async fn preprocess(self) -> Result<Self::Preprocessed> {
+    async fn preprocess(self) -> Result<(Self::Preprocessed, Self::Context)> {
         tokio::task::spawn_blocking(move || {
             let target_sample_rate = 16000;
             let target_length = 16000;
@@ -76,7 +77,7 @@ impl Input for AudioInput {
             // Normalize to fixed length
             let normalized = normalize(&resampled, target_length);
 
-            Ok(Array1::from_vec(normalized))
+            Ok((Array1::from_vec(normalized), ()))
         })
         .await?
     }
@@ -121,7 +122,7 @@ struct AudioOutput {
 }
 
 impl Output for AudioOutput {
-    async fn postprocess(raw: ArrayViewD<'_, f32>) -> Result<Self> {
+    async fn postprocess(raw: ArrayViewD<'_, f32>, _context: ()) -> Result<Self> {
         Ok(AudioOutput {
             embedding: raw.iter().cloned().collect(),
         })

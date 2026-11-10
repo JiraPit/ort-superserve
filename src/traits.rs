@@ -7,6 +7,12 @@ use std::future::Future;
 /// Implement this trait for your input type (e.g., image, text, audio) to define
 /// how raw inputs are preprocessed and batched together.
 ///
+/// Preprocessing produces two things per request: the [`Preprocessed`](Input::Preprocessed)
+/// data that is stacked into the batch tensor, and a [`Context`](Input::Context) that
+/// bypasses inference and is handed to that same request's
+/// [`Output::postprocess`]. Use the context for anything postprocessing needs to
+/// know about the original request, such as the original image size.
+///
 /// # Example
 ///
 /// ```rust
@@ -18,10 +24,13 @@ use std::future::Future;
 ///
 /// impl Input for ImageInput {
 ///     type Preprocessed = Array3<f32>;
+///     /// Original (height, width), needed to map results back to the input.
+///     type Context = (usize, usize);
 ///
-///     async fn preprocess(self) -> Result<Self::Preprocessed> {
+///     async fn preprocess(self) -> Result<(Self::Preprocessed, Self::Context)> {
+///         let original_size = (self.data.shape()[1], self.data.shape()[2]);
 ///         // Apply normalization, resizing, etc.
-///         Ok(self.data)
+///         Ok((self.data, original_size))
 ///     }
 ///
 ///     fn batch(items: Vec<Self::Preprocessed>) -> Result<ArrayD<f32>> {
@@ -37,6 +46,13 @@ pub trait Input: Send + 'static + Sized {
     /// for ONNX Runtime inference.
     type Preprocessed: Send + 'static;
 
+    /// Per-request data passed from preprocessing to postprocessing.
+    ///
+    /// It never reaches the model; the library delivers it to the
+    /// [`Output::postprocess`] call for the same request. Use `()` if
+    /// postprocessing needs nothing from the original request.
+    type Context: Send + 'static;
+
     /// Preprocess the input for inference.
     ///
     /// This method runs in a Tokio task and should handle CPU-intensive work
@@ -44,8 +60,10 @@ pub trait Input: Send + 'static + Sized {
     ///
     /// # Returns
     ///
-    /// The preprocessed data ready for batching.
-    fn preprocess(self) -> impl Future<Output = Result<Self::Preprocessed>> + Send;
+    /// The preprocessed data ready for batching, and the context to hand to
+    /// this request's postprocessing.
+    fn preprocess(self)
+    -> impl Future<Output = Result<(Self::Preprocessed, Self::Context)>> + Send;
 
     /// Batch multiple preprocessed items into a single tensor.
     ///
@@ -67,6 +85,9 @@ pub trait Input: Send + 'static + Sized {
 /// Implement this trait for your output type (e.g., detections, classifications)
 /// to define how raw ONNX tensor outputs are converted to your result type.
 ///
+/// The type parameter `C` is the [`Input::Context`] of the input this output is
+/// paired with. It defaults to `()` for outputs that need no context.
+///
 /// # Example
 ///
 /// ```rust
@@ -77,7 +98,7 @@ pub trait Input: Send + 'static + Sized {
 /// struct ClassificationOutput { class_id: usize, confidence: f32 }
 ///
 /// impl Output for ClassificationOutput {
-///     async fn postprocess(raw: ArrayViewD<'_, f32>) -> Result<Self> {
+///     async fn postprocess(raw: ArrayViewD<'_, f32>, _context: ()) -> Result<Self> {
 ///         // The batch dimension has already been sliced by the library.
 ///         // `raw` contains the output for a single inference.
 ///         let class_id = raw.iter().enumerate()
@@ -89,7 +110,7 @@ pub trait Input: Send + 'static + Sized {
 ///     }
 /// }
 /// ```
-pub trait Output: Send + 'static + Sized {
+pub trait Output<C: Send + 'static = ()>: Send + 'static + Sized {
     /// Postprocess raw ONNX output into the final result type.
     ///
     /// This method receives a single inference output (batch dimension already
@@ -101,9 +122,13 @@ pub trait Output: Send + 'static + Sized {
     /// # Arguments
     ///
     /// * `raw` - Raw tensor output from ONNX Runtime, with batch dimension removed.
+    /// * `context` - The context produced by [`Input::preprocess`] for this request.
     ///
     /// # Returns
     ///
     /// The postprocessed result.
-    fn postprocess(raw: ArrayViewD<'_, f32>) -> impl Future<Output = Result<Self>> + Send;
+    fn postprocess(
+        raw: ArrayViewD<'_, f32>,
+        context: C,
+    ) -> impl Future<Output = Result<Self>> + Send;
 }
