@@ -9,7 +9,7 @@
 
 use anyhow::Result;
 use ndarray::{Array1, ArrayD, ArrayViewD};
-use ort_superserve::{Input, Output, Server, ServerConfig, helpers::batch_array};
+use ort_superserve::{Input, Output, Server, ServerConfig, create_env, helpers::batch_array};
 use std::path::PathBuf;
 
 /// Raw audio samples loaded from WAV file.
@@ -141,11 +141,16 @@ async fn main() -> Result<()> {
     let model_path = &args[1];
     let audio_path = PathBuf::from(&args[2]);
 
+    // Create the ONNX Runtime environment explicitly. ONNX Runtime allows one per
+    // process, so applications with several servers should share (clone) it.
+    let env = create_env()?;
+
     let config = ServerConfig::new()
         .with_num_sessions(2)
         .with_threads_per_session(4)
         .with_max_batch_size(8)
-        .with_min_batch_size(1);
+        .with_min_batch_size(1)
+        .with_environment(env);
 
     let server = Server::<AudioInput, AudioOutput>::from_file(model_path, config).await?;
 

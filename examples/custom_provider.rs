@@ -1,7 +1,7 @@
 use anyhow::Result;
 use ndarray::{Array3, ArrayD, ArrayViewD};
 use ort_superserve::{
-    ExecutionProvider, Input, Output, Server, ServerConfig, helpers::batch_array,
+    ExecutionProvider, Input, Output, Server, ServerConfig, create_env, helpers::batch_array,
 };
 use std::sync::Arc;
 
@@ -47,12 +47,17 @@ async fn main() -> Result<()> {
             .with_execution_providers([ort::ep::CPU::default().build()])
     }));
 
+    // Create the ONNX Runtime environment explicitly. ONNX Runtime allows one per
+    // process, so applications with several servers should share (clone) it.
+    let env = create_env()?;
+
     let config = ServerConfig::new()
         .with_num_sessions(2)
         .with_threads_per_session(2)
         .with_max_batch_size(8)
         .with_min_batch_size(1)
-        .with_execution_provider(custom_provider);
+        .with_execution_provider(custom_provider)
+        .with_environment(env);
 
     let model_path = std::env::args()
         .nth(1)

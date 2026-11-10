@@ -29,7 +29,7 @@ Orchestrates a pool of ONNX sessions with dynamic batching and parallel processi
 ```rust
 use anyhow::Result;
 use ndarray::{ArrayD, ArrayViewD, Array3};
-use ort_superserve::{helpers::batch_array, Input, Output, Server, ServerConfig};
+use ort_superserve::{create_env, helpers::batch_array, Input, Output, Server, ServerConfig};
 
 // 1. Define your input type
 struct MyInput {
@@ -66,10 +66,15 @@ impl Output for MyOutput {
 // 3. Create server and run inference
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Create the ONNX Runtime environment explicitly (one per process; clone it
+    // to share it between servers).
+    let env = create_env()?;
+
     let config = ServerConfig::new()
         .with_num_sessions(4)
         .with_threads_per_session(2)
-        .with_max_batch_size(16);
+        .with_max_batch_size(16)
+        .with_environment(env);
 
     let server = Server::<MyInput, MyOutput>::from_file("model.onnx", config).await?;
 
@@ -86,6 +91,8 @@ async fn main() -> Result<()> {
 use ort_superserve::{ServerConfig, ExecutionProvider, create_env};
 use std::time::Duration;
 
+let env = create_env()?;
+
 let config = ServerConfig::new()
     .with_num_sessions(4)                              // Number of ONNX sessions in the pool
     .with_threads_per_session(2)                       // Threads per session
@@ -93,7 +100,7 @@ let config = ServerConfig::new()
     .with_min_batch_size(1)                            // Minimum batch size
     .with_max_wait_time(Duration::from_millis(10))     // Max wait for batching
     .with_execution_provider(ExecutionProvider::Cpu)   // CPU execution (default)
-    .with_environment(create_env()?);                  // Optional: shared ONNX Runtime environment
+    .with_environment(env);                            // ONNX Runtime environment (see below)
 ```
 
 ### ONNX Runtime environment

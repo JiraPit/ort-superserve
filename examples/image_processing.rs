@@ -9,8 +9,8 @@
 
 use anyhow::Result;
 use image::{DynamicImage, ImageBuffer, Rgb};
-use ndarray::{Array3, ArrayD, ArrayViewD, Axis};
-use ort_superserve::{Input, Output, Server, ServerConfig, helpers::batch_array};
+use ndarray::{Array3, ArrayD, ArrayViewD};
+use ort_superserve::{Input, Output, Server, ServerConfig, create_env, helpers::batch_array};
 use std::path::PathBuf;
 
 /// Input type that holds a dynamic image.
@@ -68,16 +68,8 @@ struct ClassificationOutput {
 
 impl Output for ClassificationOutput {
     async fn postprocess(raw: ArrayViewD<'_, f32>) -> Result<Self> {
-        let shape = raw.shape();
-        let batch_size = shape[0];
-
-        let mut scores = Vec::with_capacity(batch_size);
-        for i in 0..batch_size {
-            let slice = raw.index_axis(Axis(0), i);
-            scores.push(slice[[0]]);
-        }
-
-        let (class_id, &confidence) = scores
+        // `raw` holds the class scores for this one image (batch axis already removed).
+        let (class_id, &confidence) = raw
             .iter()
             .enumerate()
             .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
@@ -103,11 +95,16 @@ async fn main() -> Result<()> {
     let model_path = &args[1];
     let image_path = PathBuf::from(&args[2]);
 
+    // Create the ONNX Runtime environment explicitly. ONNX Runtime allows one per
+    // process, so applications with several servers should share (clone) it.
+    let env = create_env()?;
+
     let config = ServerConfig::new()
         .with_num_sessions(2)
         .with_threads_per_session(4)
         .with_max_batch_size(8)
-        .with_min_batch_size(1);
+        .with_min_batch_size(1)
+        .with_environment(env);
 
     let server = Server::<ImageInput, ClassificationOutput>::from_file(model_path, config).await?;
 

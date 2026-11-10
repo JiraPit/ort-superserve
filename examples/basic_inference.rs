@@ -1,6 +1,6 @@
 use anyhow::Result;
 use ndarray::{Array3, ArrayD, ArrayViewD};
-use ort_superserve::{Input, Output, Server, ServerConfig, helpers::batch_array};
+use ort_superserve::{Input, Output, Server, ServerConfig, create_env, helpers::batch_array};
 
 struct ArrayInput {
     data: Array3<f32>,
@@ -38,11 +38,16 @@ impl Output for ArrayOutput {
 async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
 
+    // Create the ONNX Runtime environment explicitly. ONNX Runtime allows one per
+    // process, so applications with several servers should share (clone) it.
+    let env = create_env()?;
+
     let config = ServerConfig::new()
         .with_num_sessions(2)
         .with_threads_per_session(4)
         .with_max_batch_size(8)
-        .with_min_batch_size(1);
+        .with_min_batch_size(1)
+        .with_environment(env);
 
     let model_path = std::env::args()
         .nth(1)

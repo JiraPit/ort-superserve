@@ -21,7 +21,7 @@ use std::sync::Arc;
 /// # Example
 ///
 /// ```rust,no_run
-/// use ort_superserve::{Server, ServerConfig, Input, Output};
+/// use ort_superserve::{Server, ServerConfig, Input, Output, create_env};
 /// use ndarray::{ArrayD, ArrayViewD, Array3, Axis};
 /// use anyhow::Result;
 ///
@@ -43,9 +43,14 @@ use std::sync::Arc;
 /// }
 ///
 /// # async fn example() -> Result<()> {
+/// // Create the ONNX Runtime environment explicitly (one per process; clone it
+/// // to share it between servers).
+/// let env = create_env()?;
+///
 /// let config = ServerConfig::new()
 ///     .with_num_sessions(4)
-///     .with_max_batch_size(16);
+///     .with_max_batch_size(16)
+///     .with_environment(env);
 ///
 /// let server = Server::<MyInput, MyOutput>::from_file("model.onnx", config).await?;
 ///

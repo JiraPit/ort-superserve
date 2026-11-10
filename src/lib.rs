@@ -32,7 +32,7 @@
 //! ```rust,no_run
 //! use anyhow::Result;
 //! use ndarray::{ArrayD, ArrayViewD, Array3};
-//! use ort_superserve::{helpers::batch_array, Input, Output, Server, ServerConfig};
+//! use ort_superserve::{create_env, helpers::batch_array, Input, Output, Server, ServerConfig};
 //!
 //! struct ImageInput { data: Array3<f32> }
 //!
@@ -58,9 +58,14 @@
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<()> {
+//!     // Create the ONNX Runtime environment explicitly (one per process; clone it
+//!     // to share it between servers).
+//!     let env = create_env()?;
+//!
 //!     let config = ServerConfig::new()
 //!         .with_num_sessions(4)
-//!         .with_max_batch_size(16);
+//!         .with_max_batch_size(16)
+//!         .with_environment(env);
 //!
 //!     let server = Server::<ImageInput, DetectionOutput>::from_file("model.onnx", config).await?;
 //!     let output = server.infer(ImageInput { data: Array3::zeros((3, 224, 224)) }).await?;

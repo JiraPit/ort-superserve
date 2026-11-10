@@ -1,7 +1,7 @@
 use anyhow::Result;
 use image::{DynamicImage, GenericImageView, ImageBuffer, Rgb};
 use ndarray::{Array3, ArrayD, ArrayViewD, Axis};
-use ort_superserve::{Input, Output, Server, ServerConfig};
+use ort_superserve::{Input, Output, Server, ServerConfig, create_env};
 use std::path::Path;
 
 pub struct PersonDetectionInput {
@@ -157,11 +157,16 @@ fn compute_iou(box1: &BoundingBox, box2: &BoundingBox) -> f32 {
 async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
 
+    // Create the ONNX Runtime environment explicitly. ONNX Runtime allows one per
+    // process, so applications with several servers should share (clone) it.
+    let env = create_env()?;
+
     let config = ServerConfig::new()
         .with_num_sessions(2)
         .with_threads_per_session(4)
         .with_max_batch_size(8)
-        .with_min_batch_size(1);
+        .with_min_batch_size(1)
+        .with_environment(env);
 
     let model_path = std::env::args()
         .nth(1)

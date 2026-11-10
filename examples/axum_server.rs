@@ -81,22 +81,17 @@ async fn main() -> Result<()> {
         .nth(1)
         .expect("Usage: axum_server <model.onnx>");
 
+    // Create the ONNX Runtime environment explicitly. ONNX Runtime allows one per
+    // process, so applications with several servers should share (clone) it.
+    let env = create_env()?;
+
     let config = ServerConfig::new()
         .with_num_sessions(4)
         .with_threads_per_session(2)
-        .with_max_batch_size(16);
+        .with_max_batch_size(16)
+        .with_environment(env);
 
-    // Create the ONNX Runtime environment once per process and give a clone to
-    // every server, so servers can be added, dropped and recreated freely.
-    let env = create_env()?;
-
-    let server = Arc::new(
-        Server::<ArrayInput, ArrayOutput>::from_file(
-            &model_path,
-            config.with_environment(env.clone()),
-        )
-        .await?,
-    );
+    let server = Arc::new(Server::<ArrayInput, ArrayOutput>::from_file(&model_path, config).await?);
 
     println!("Listening on http://0.0.0.0:3000");
 
