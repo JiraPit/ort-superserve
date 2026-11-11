@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Check formatting
+        run: cargo fmt --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - uses: astral-sh/setup-uv@v6
+
+      # tests/mobilenet.rs needs the MobileNetV2 model and test images.
+      - name: Cache test assets
+        uses: actions/cache@v4
+        with:
+          path: test_assets
+          key: test-assets-${{ hashFiles('download_test_assets/**') }}
+
+      - name: Download test assets
+        run: |
+          if [ ! -f test_assets/mobilenetv2-12-int8/mobilenetv2-12-int8.onnx ]; then
+            uv run --project download_test_assets download_test_assets/download_test_assets.py --model mobilenet
+          fi
+
+      - name: Test
+        run: cargo test --all-targets
+
+      - name: Verify package
+        run: cargo package
