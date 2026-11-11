@@ -8,7 +8,7 @@ Orchestrates a pool of ONNX sessions with dynamic batching and parallel processi
 
 ![Architecture Diagram](diagrams/flow.png)
 
-## Features
+## Key Features
 
 - **Lock-free**: Unlike the naive approach of wrapping an ONNX session in `Arc<Mutex<Session>>` which creates a bottleneck under load, ort-superserve uses an actor model where requests flow through channels instead of locks, and a session pool where multiple ONNX sessions run in parallel on dedicated threads—zero mutex on the hot path.
 
@@ -20,15 +20,7 @@ Orchestrates a pool of ONNX sessions with dynamic batching and parallel processi
 
 - **Any inputs and outputs**: Models can have any number of named inputs and outputs of any common element type (`f32`, `f64`, `i8`–`i64`, `u8`–`u64`, `bool`). A detector returning separate `boxes`, `scores` and `i64` `labels` just works, and you control how each output is split back per request.
 
-- **Fixed batch sizes and variable shapes**: Models exported with a fixed batch size are served by padding partial batches up to that size. Requests with different lengths along a dynamic dimension (like token sequences) share a batch: each is padded to the longest one, with a configurable padding value per input, and outputs are cut back so every caller only sees its own positions. Padded rows never reach a caller.
-
-- **Safe by default**: A caller never silently receives someone else's data. Outputs whose axis 0 is not one entry per request (e.g. NMS results) are rejected with a clear error unless you configure how to split them.
-
-- **Custom pre/post-processing**: The `Input` and `Output` traits let you define preprocessing and postprocessing for any data type—images, text, audio, video, or complex structs. You implement `preprocess` and `postprocess`; the library handles batching and orchestration, including passing per-request context (like the original image size) from preprocessing to postprocessing.
-
 - **Session pool**: On multi-core servers, scaling a single ONNX session with more threads hits diminishing returns due to lock contention and memory bandwidth limits. A session pool runs multiple independent sessions in parallel, each with fewer threads, achieving near-linear scaling with core count. This is essential for high-throughput serving on modern hardware.
-
-- **Parallel pre/post-processing**: Preprocessing and postprocessing run concurrently using `JoinSet`, pipelining CPU work while the GPU handles inference. This overlaps computation and hides latency, keeping the inference pipeline fully utilized.
 
 ## Quick Start
 
