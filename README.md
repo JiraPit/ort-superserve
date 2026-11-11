@@ -237,14 +237,6 @@ let classifier = Server::<ImageInput, Classes>::from_file(
 ).await?;
 ```
 
-## Loading Models
-
-Load a model with `Server::from_file` or `Server::from_url`. Both return once every session in the pool has loaded the model, and fail if any session cannot be initialized. `from_url` downloads the model to a temporary file and deletes it after startup.
-
-## Axum Integration
-
-Share the server across all HTTP handlers using `Arc`. See `examples/axum_server.rs` for a complete example with graceful shutdown.
-
 ## License
 
 MIT
