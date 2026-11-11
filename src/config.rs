@@ -1,4 +1,5 @@
 use crate::environment::Environment;
+use crate::split::Split;
 use ort::session::builder::GraphOptimizationLevel;
 use std::sync::Arc;
 use std::time::Duration;
@@ -117,6 +118,214 @@ impl std::fmt::Debug for ExecutionProvider {
     }
 }
 
+/// Options for one model input.
+///
+/// # Example
+///
+/// ```rust
+/// use ort_superserve::{InputSpec, ServerConfig};
+///
+/// // Token sequences of different lengths: pad ids with 0 (the default) and
+/// // the attention mask with 0 so padded positions are ignored.
+/// let config = ServerConfig::new()
+///     .with_input(InputSpec::new("input_ids").with_pad_value(0.0))
+///     .with_input(InputSpec::new("attention_mask").with_pad_value(0.0));
+/// ```
+#[derive(Clone, Debug, PartialEq)]
+pub struct InputSpec {
+    /// Model input name.
+    pub name: String,
+
+    /// Value used to fill padding of this input, converted to its element
+    /// type (non-zero means `true` for `bool`). Defaults to `0`.
+    ///
+    /// Padding is added when requests in a batch have different lengths along
+    /// a dynamic dimension (each is padded to the longest), and to fill whole
+    /// rows when a partial batch is padded to a fixed model batch size.
+    pub pad_value: f64,
+
+    /// Whether the input carries the batch axis.
+    ///
+    /// `None` (default) means batched unless the model declares the input as
+    /// a scalar. An unbatched input (e.g. an NMS threshold) is passed to the
+    /// model as given and must be identical for every request in a batch.
+    pub batched: Option<bool>,
+}
+
+impl InputSpec {
+    /// Options for the model input `name`, with default values.
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            pad_value: 0.0,
+            batched: None,
+        }
+    }
+
+    /// Set the padding value, see [`InputSpec::pad_value`].
+    pub fn with_pad_value(mut self, value: f64) -> Self {
+        self.pad_value = value;
+        self
+    }
+
+    /// Set whether the input carries the batch axis, see [`InputSpec::batched`].
+    pub fn with_batched(mut self, batched: bool) -> Self {
+        self.batched = Some(batched);
+        self
+    }
+}
+
+/// An output axis that follows a dynamic dimension of an input.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CropAxis {
+    /// Axis of the (batched) output.
+    pub axis: usize,
+    /// Input whose dimension the axis follows.
+    pub input: String,
+    /// Axis of the (batched) input; axis 0 is the batch axis.
+    pub input_axis: usize,
+}
+
+/// Options for one model output.
+///
+/// # Example
+///
+/// ```rust
+/// use ort_superserve::{OutputSpec, ServerConfig, Split};
+///
+/// // NMS model: `detections` rows are `[batch_id, x1, y1, x2, y2, score, class]`.
+/// let config = ServerConfig::new()
+///     .with_output(OutputSpec::new("detections").with_split(Split::batch_index_column(0)));
+/// ```
+///
+/// # Outputs of models with padded inputs
+///
+/// When an input has a dynamic dimension besides the batch axis (e.g.
+/// `input_ids: [batch, sequence]`), requests of different lengths share a
+/// batch: shorter ones are padded to the longest (see
+/// [`InputSpec::pad_value`]). An output with one entry per input position,
+/// like per-token logits `[batch, sequence, num_labels]`, then also has the
+/// padded length, and each request's result is cut back to its own length
+/// before it reaches the caller.
+///
+/// To do that, the server has to know which output axes follow which padded
+/// input dimension. It reads this from the symbolic dimension names in the
+/// model: an output axis named like an input dimension (both `sequence`)
+/// follows it, and an axis with a fixed size or with another name chosen by
+/// the model author does not. Exporters often generate names instead: an
+/// empty name, `?`, a name starting with `unk__`, or one containing
+/// `dynamic_axes`. For such an axis the server cannot tell, so if any input
+/// can be padded, [`Server::from_file`](crate::Server::from_file) fails with
+/// an error naming the output and axis, until you declare it:
+///
+/// - [`with_crop_axis`](Self::with_crop_axis) if the axis has one entry per
+///   position of an input dimension, so padded positions are cut off;
+/// - [`with_uncropped_axis`](Self::with_uncropped_axis) if it does not, so it
+///   is returned in full.
+///
+/// Only selected outputs are checked: if you do not need an output, select
+/// the ones you need with [`ServerConfig::with_output`] instead. Outputs with
+/// a [`Split::Custom`] are not checked either, since their split function
+/// handles padding itself.
+///
+/// If the model declares no shape for an output, nothing can be checked at
+/// startup. The server then fails any batch where an axis of that output has
+/// the length an input dimension was padded to, rather than return padded
+/// positions to callers; declare the axes to avoid this.
+///
+/// ```rust
+/// use ort_superserve::{InputSpec, OutputSpec, ServerConfig};
+///
+/// // input_ids: [batch, sequence]
+/// // logits:    [batch, unk__0, num_labels]  one row per token
+/// // top_ids:   [batch, unk__1]              k best labels, unrelated to the sequence
+/// let config = ServerConfig::new()
+///     .with_input(InputSpec::new("input_ids").with_pad_value(0.0))
+///     .with_output(OutputSpec::new("logits").with_crop_axis(1, "input_ids", 1))
+///     .with_output(OutputSpec::new("top_ids").with_uncropped_axis(1));
+/// ```
+#[derive(Clone, Debug)]
+pub struct OutputSpec {
+    /// Model output name.
+    pub name: String,
+
+    /// How the output is split per request; `None` uses the default
+    /// [`Split::BatchAxis`] with its metadata checks.
+    pub split: Option<Split>,
+
+    /// Output axes that follow a padded input dimension, in addition to the
+    /// ones detected from the model's dimension names.
+    pub crop_axes: Vec<CropAxis>,
+
+    /// Output axes that never follow a padded input dimension, even if their
+    /// length happens to equal a padded length.
+    pub uncropped_axes: Vec<usize>,
+}
+
+impl OutputSpec {
+    /// Options for the model output `name`, with default values.
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            split: None,
+            crop_axes: Vec::new(),
+            uncropped_axes: Vec::new(),
+        }
+    }
+
+    /// Set how the output is split per request.
+    pub fn with_split(mut self, split: Split) -> Self {
+        self.split = Some(split);
+        self
+    }
+
+    /// Declare that output axis `axis` follows axis `input_axis` of input
+    /// `input`, so each request's result is cut back to that request's own
+    /// length along it.
+    ///
+    /// Both axes are counted with the batch axis, so the first axis after it
+    /// is `1`: for `logits: [batch, unk__0, num_labels]` following
+    /// `input_ids: [batch, sequence]`, use `with_crop_axis(1, "input_ids", 1)`.
+    ///
+    /// Axes named like the input dimension in the model are linked
+    /// automatically; this is for axes whose names do not match, typically
+    /// names generated by the exporter. See
+    /// [Outputs of models with padded inputs](OutputSpec#outputs-of-models-with-padded-inputs)
+    /// for when it is required.
+    ///
+    /// Startup fails if `axis` is 0, `input` is not a batched model input, or
+    /// its axis `input_axis` is the batch axis, does not exist or has a fixed
+    /// size. A batch fails if the output axis does not have the length the
+    /// input dimension was padded to, since then it does not follow it.
+    pub fn with_crop_axis(
+        mut self,
+        axis: usize,
+        input: impl Into<String>,
+        input_axis: usize,
+    ) -> Self {
+        self.crop_axes.push(CropAxis {
+            axis,
+            input: input.into(),
+            input_axis,
+        });
+        self
+    }
+
+    /// Declare that output axis `axis` (counted with the batch axis) does not
+    /// follow any padded input dimension, so it is returned in full, even
+    /// when its length happens to equal a length an input was padded to.
+    ///
+    /// Use it for a dynamic output axis with a name generated by the exporter
+    /// that is unrelated to the input lengths, e.g. the `k` of a top-k
+    /// output. See
+    /// [Outputs of models with padded inputs](OutputSpec#outputs-of-models-with-padded-inputs)
+    /// for when it is required.
+    pub fn with_uncropped_axis(mut self, axis: usize) -> Self {
+        self.uncropped_axes.push(axis);
+        self
+    }
+}
+
 /// Configuration for the inference server.
 ///
 /// Controls session pool size, batching behavior, and execution providers.
@@ -152,6 +361,10 @@ pub struct ServerConfig {
     ///
     /// The batcher will collect up to this many requests before sending
     /// them to inference. Higher values increase throughput but also latency.
+    ///
+    /// For a model exported with a fixed batch size, batches are capped at
+    /// that size, and smaller batches are padded up to it (the padded rows
+    /// never reach a caller).
     pub max_batch_size: usize,
 
     /// Minimum number of requests required to form a batch.
@@ -177,15 +390,22 @@ pub struct ServerConfig {
     /// Controls how aggressively ONNX Runtime optimizes the computation graph.
     pub optimization_level: GraphOptimizationLevel,
 
-    /// Optional input tensor name.
+    /// Default input name, receiving the unnamed tensor of an
+    /// [`Inputs`](crate::Inputs).
     ///
     /// If not specified, the first input from the model is used.
     pub input_name: Option<String>,
 
-    /// Optional output tensor name.
+    /// Per-input options (padding value, batching).
     ///
-    /// If not specified, the first output from the model is used.
-    pub output_name: Option<String>,
+    /// Inputs not listed here use [`InputSpec::new`] defaults.
+    pub inputs: Vec<InputSpec>,
+
+    /// Outputs to fetch, in order, with how each is split per request.
+    ///
+    /// If empty (default), every model output is fetched in model order with
+    /// the default [`Split::BatchAxis`].
+    pub outputs: Vec<OutputSpec>,
 
     /// Whether to preprocess inputs immediately in `infer()` before queuing.
     ///
@@ -218,7 +438,8 @@ impl Default for ServerConfig {
             execution_providers: vec![ExecutionProvider::Cpu],
             optimization_level: GraphOptimizationLevel::Level3,
             input_name: None,
-            output_name: None,
+            inputs: Vec::new(),
+            outputs: Vec::new(),
             preprocess_on_infer: false,
             environment: None,
         }
@@ -252,7 +473,8 @@ impl ServerConfig {
     /// Set the maximum batch size.
     ///
     /// The batcher will collect up to this many requests before sending
-    /// them to inference.
+    /// them to inference. It is capped at the model's batch size if the model
+    /// has a fixed one.
     pub fn with_max_batch_size(mut self, size: usize) -> Self {
         self.max_batch_size = size;
         self
@@ -292,7 +514,8 @@ impl ServerConfig {
         self
     }
 
-    /// Set the input tensor name.
+    /// Set the default input name, which receives the unnamed tensor of an
+    /// [`Inputs`](crate::Inputs) (e.g. one converted from an array).
     ///
     /// If not specified, the first input from the model is used.
     pub fn with_input_name(mut self, name: impl Into<String>) -> Self {
@@ -300,12 +523,49 @@ impl ServerConfig {
         self
     }
 
-    /// Set the output tensor name.
-    ///
-    /// If not specified, the first output from the model is used.
-    pub fn with_output_name(mut self, name: impl Into<String>) -> Self {
-        self.output_name = Some(name.into());
+    /// Set options for one input. Setting the same input again replaces its
+    /// options.
+    pub fn with_input(mut self, spec: InputSpec) -> Self {
+        self.inputs.retain(|s| s.name != spec.name);
+        self.inputs.push(spec);
         self
+    }
+
+    /// Set the padding value of one input, see [`InputSpec::pad_value`].
+    pub fn with_pad_value(mut self, input: impl Into<String>, value: f64) -> Self {
+        let input = input.into();
+        match self.inputs.iter_mut().find(|s| s.name == input) {
+            Some(spec) => spec.pad_value = value,
+            None => self
+                .inputs
+                .push(InputSpec::new(input).with_pad_value(value)),
+        }
+        self
+    }
+
+    /// Fetch an output, with its options.
+    ///
+    /// Once any output is configured, only the configured outputs are fetched,
+    /// in the order they were added. Adding the same output again replaces its
+    /// options.
+    pub fn with_output(mut self, spec: OutputSpec) -> Self {
+        match self.outputs.iter_mut().find(|s| s.name == spec.name) {
+            Some(existing) => *existing = spec,
+            None => self.outputs.push(spec),
+        }
+        self
+    }
+
+    /// Fetch the output `name` with default options; shorthand for
+    /// `with_output(OutputSpec::new(name))`.
+    pub fn with_output_name(self, name: impl Into<String>) -> Self {
+        self.with_output(OutputSpec::new(name))
+    }
+
+    /// Fetch the output `name`, split with `split`; shorthand for
+    /// `with_output(OutputSpec::new(name).with_split(split))`.
+    pub fn with_output_split(self, name: impl Into<String>, split: Split) -> Self {
+        self.with_output(OutputSpec::new(name).with_split(split))
     }
 
     /// Set whether to preprocess inputs immediately in `infer()` before queuing.
@@ -348,7 +608,7 @@ mod tests {
         ));
         assert_eq!(config.optimization_level, GraphOptimizationLevel::Level3);
         assert_eq!(config.input_name, None);
-        assert_eq!(config.output_name, None);
+        assert!(config.outputs.is_empty());
         assert!(!config.preprocess_on_infer);
         assert!(config.environment.is_none());
     }
@@ -373,7 +633,8 @@ mod tests {
         assert_eq!(config.max_wait_time, Duration::from_millis(20));
         assert_eq!(config.optimization_level, GraphOptimizationLevel::Level1);
         assert_eq!(config.input_name.as_deref(), Some("input_tensor"));
-        assert_eq!(config.output_name.as_deref(), Some("output_tensor"));
+        let output_names: Vec<_> = config.outputs.iter().map(|o| o.name.as_str()).collect();
+        assert_eq!(output_names, ["output_tensor"]);
         assert!(config.preprocess_on_infer);
     }
 

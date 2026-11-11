@@ -4,7 +4,10 @@
 //! Field numbers follow `onnx.proto`.
 
 const ELEM_FLOAT: i64 = 1;
+const ELEM_UINT8: i64 = 2;
 const ELEM_INT64: i64 = 7;
+const ELEM_BOOL: i64 = 9;
+const ELEM_DOUBLE: i64 = 11;
 const ATTR_INT: i64 = 2;
 const ATTR_INTS: i64 = 7;
 
@@ -30,6 +33,8 @@ fn bytes_field(buf: &mut Vec<u8>, field: u64, data: &[u8]) {
 enum Dim {
     Batch,
     Fixed(i64),
+    /// A dynamic dimension with this symbolic name.
+    Named(&'static str),
 }
 
 /// `ValueInfoProto` for a tensor.
@@ -40,6 +45,7 @@ fn value_info(name: &str, elem_type: i64, dims: &[Dim]) -> Vec<u8> {
         match dim {
             Dim::Batch => bytes_field(&mut d, 2, b"N"),
             Dim::Fixed(v) => int_field(&mut d, 1, *v),
+            Dim::Named(name) => bytes_field(&mut d, 2, name.as_bytes()),
         }
         bytes_field(&mut shape, 1, &d);
     }
@@ -77,6 +83,32 @@ fn scalar_initializer(name: &str, value: f32) -> Vec<u8> {
     int_field(&mut tensor, 2, ELEM_FLOAT);
     bytes_field(&mut tensor, 8, name.as_bytes());
     bytes_field(&mut tensor, 9, &value.to_le_bytes());
+    tensor
+}
+
+/// `TensorProto` initializer with a shape, holding `f32` values.
+fn float_initializer(name: &str, dims: &[i64], values: &[f32]) -> Vec<u8> {
+    let mut tensor = Vec::new();
+    for d in dims {
+        int_field(&mut tensor, 1, *d);
+    }
+    int_field(&mut tensor, 2, ELEM_FLOAT);
+    bytes_field(&mut tensor, 8, name.as_bytes());
+    let raw: Vec<u8> = values.iter().flat_map(|v| v.to_le_bytes()).collect();
+    bytes_field(&mut tensor, 9, &raw);
+    tensor
+}
+
+/// `TensorProto` initializer with a shape (empty for a scalar), holding `i64` values.
+fn int64_initializer(name: &str, dims: &[i64], values: &[i64]) -> Vec<u8> {
+    let mut tensor = Vec::new();
+    for d in dims {
+        int_field(&mut tensor, 1, *d);
+    }
+    int_field(&mut tensor, 2, ELEM_INT64);
+    bytes_field(&mut tensor, 8, name.as_bytes());
+    let raw: Vec<u8> = values.iter().flat_map(|v| v.to_le_bytes()).collect();
+    bytes_field(&mut tensor, 9, &raw);
     tensor
 }
 
@@ -205,5 +237,322 @@ pub fn int64_output_model() -> Vec<u8> {
         &[],
         &[batched_float("x")],
         &[value_info("y", ELEM_INT64, &[Dim::Batch, Dim::Fixed(4)])],
+    )
+}
+
+fn tokens(name: &str, batch: Dim) -> Vec<u8> {
+    value_info(name, ELEM_INT64, &[batch, Dim::Named("sequence")])
+}
+
+/// Token model with inputs `input_ids` and `attention_mask` (`i64`, `[batch,
+/// sequence]`) and outputs:
+/// - `masked = ids * mask` (`f32`, `[batch, sequence]`),
+/// - `labels = ids` (`i64`, `[batch, sequence]`),
+/// - `max_id`, the largest id including padding (`f32`, `[batch]`).
+fn tokens_model_with_batch(batch: fn() -> Dim) -> Vec<u8> {
+    model(
+        &[
+            node(
+                "Cast",
+                &["input_ids"],
+                &["ids_f"],
+                &[Attr::Int("to", ELEM_FLOAT)],
+            ),
+            node(
+                "Cast",
+                &["attention_mask"],
+                &["mask_f"],
+                &[Attr::Int("to", ELEM_FLOAT)],
+            ),
+            node("Mul", &["ids_f", "mask_f"], &["masked"], &[]),
+            node("Identity", &["input_ids"], &["labels"], &[]),
+            node(
+                "ReduceMax",
+                &["ids_f"],
+                &["max_id"],
+                &[Attr::Ints("axes", &[1]), Attr::Int("keepdims", 0)],
+            ),
+        ],
+        &[],
+        &[
+            tokens("input_ids", batch()),
+            tokens("attention_mask", batch()),
+        ],
+        &[
+            value_info("masked", ELEM_FLOAT, &[batch(), Dim::Named("sequence")]),
+            value_info("labels", ELEM_INT64, &[batch(), Dim::Named("sequence")]),
+            value_info("max_id", ELEM_FLOAT, &[batch()]),
+        ],
+    )
+}
+
+pub fn tokens_model() -> Vec<u8> {
+    tokens_model_with_batch(|| Dim::Batch)
+}
+
+/// [`tokens_model`] exported with a fixed batch size of 4.
+pub fn fixed_batch_tokens_model() -> Vec<u8> {
+    tokens_model_with_batch(|| Dim::Fixed(4))
+}
+
+/// `u8` input `x: [N, 3]` with outputs `as_f64` (`f64`) and `nonzero` (`bool`).
+pub fn element_types_model() -> Vec<u8> {
+    model(
+        &[
+            node("Cast", &["x"], &["as_f64"], &[Attr::Int("to", ELEM_DOUBLE)]),
+            node("Cast", &["x"], &["nonzero"], &[Attr::Int("to", ELEM_BOOL)]),
+        ],
+        &[],
+        &[value_info("x", ELEM_UINT8, &[Dim::Batch, Dim::Fixed(3)])],
+        &[
+            value_info("as_f64", ELEM_DOUBLE, &[Dim::Batch, Dim::Fixed(3)]),
+            value_info("nonzero", ELEM_BOOL, &[Dim::Batch, Dim::Fixed(3)]),
+        ],
+    )
+}
+
+/// `y = x * scale` with `x: [N, 4]` and a scalar `scale` input shared by the batch.
+pub fn scaled_model() -> Vec<u8> {
+    model(
+        &[node("Mul", &["x", "scale"], &["y"], &[])],
+        &[],
+        &[batched_float("x"), value_info("scale", ELEM_FLOAT, &[])],
+        &[batched_float("y")],
+    )
+}
+
+/// NMS-like model for `x: [N, 2]`. Every batch entry `i` produces two rows: row
+/// `i` of a first block in batch order, then row `2N - 1 - i` of a second block
+/// in reverse batch order, so rows of one entry are not evenly spaced:
+/// - `detections` (`[2N, 3]`): `[i, x0, x1]` then `[i, x0 + 10, x1 + 10]`,
+/// - `boxes` (`[2N, 2]`): the same rows without the batch index column,
+/// - `batch_index` (`i64`, `[2N]`): the batch index of each `boxes` row.
+///
+/// Outputs are declared without a shape, like real NMS outputs.
+pub fn nms_model() -> Vec<u8> {
+    model(
+        &[
+            node("Shape", &["x"], &["shape"], &[]),
+            node(
+                "Gather",
+                &["shape", "zero"],
+                &["n"],
+                &[Attr::Int("axis", 0)],
+            ),
+            node("Range", &["zero", "n", "one"], &["index"], &[]),
+            node(
+                "Cast",
+                &["index"],
+                &["index_f"],
+                &[Attr::Int("to", ELEM_FLOAT)],
+            ),
+            node("Unsqueeze", &["index_f", "axis_1"], &["index_col"], &[]),
+            node("Add", &["x", "ten"], &["x10"], &[]),
+            node(
+                "Concat",
+                &["index_col", "x"],
+                &["first"],
+                &[Attr::Int("axis", 1)],
+            ),
+            node(
+                "Concat",
+                &["index_col", "x10"],
+                &["second"],
+                &[Attr::Int("axis", 1)],
+            ),
+            node(
+                "Slice",
+                &["second", "last", "before_first", "axis_0", "minus_one"],
+                &["second_rev"],
+                &[],
+            ),
+            node(
+                "Slice",
+                &["x10", "last", "before_first", "axis_0", "minus_one"],
+                &["x10_rev"],
+                &[],
+            ),
+            node(
+                "Slice",
+                &["index", "last", "before_first", "axis_0", "minus_one"],
+                &["index_rev"],
+                &[],
+            ),
+            node(
+                "Concat",
+                &["first", "second_rev"],
+                &["detections"],
+                &[Attr::Int("axis", 0)],
+            ),
+            node(
+                "Concat",
+                &["x", "x10_rev"],
+                &["boxes"],
+                &[Attr::Int("axis", 0)],
+            ),
+            node(
+                "Concat",
+                &["index", "index_rev"],
+                &["batch_index"],
+                &[Attr::Int("axis", 0)],
+            ),
+        ],
+        &[
+            int64_initializer("zero", &[], &[0]),
+            int64_initializer("one", &[], &[1]),
+            int64_initializer("axis_0", &[1], &[0]),
+            int64_initializer("axis_1", &[1], &[1]),
+            // Slice parameters that reverse axis 0.
+            int64_initializer("last", &[1], &[-1]),
+            int64_initializer("before_first", &[1], &[i64::MIN]),
+            int64_initializer("minus_one", &[1], &[-1]),
+            scalar_initializer("ten", 10.0),
+        ],
+        &[value_info("x", ELEM_FLOAT, &[Dim::Batch, Dim::Fixed(2)])],
+        &[
+            unshaped_value_info("detections", ELEM_FLOAT),
+            unshaped_value_info("boxes", ELEM_FLOAT),
+            unshaped_value_info("batch_index", ELEM_INT64),
+        ],
+    )
+}
+
+/// NMS-like model exported with a fixed batch size of 4: `x: [4, 2]`, output
+/// `detections = [i, x0, x1]` for every batch slot `i`, padded slots included.
+pub fn fixed_batch_nms_model() -> Vec<u8> {
+    model(
+        &[node(
+            "Concat",
+            &["index", "x"],
+            &["detections"],
+            &[Attr::Int("axis", 1)],
+        )],
+        &[float_initializer("index", &[4, 1], &[0.0, 1.0, 2.0, 3.0])],
+        &[value_info("x", ELEM_FLOAT, &[Dim::Fixed(4), Dim::Fixed(2)])],
+        &[unshaped_value_info("detections", ELEM_FLOAT)],
+    )
+}
+
+/// `y = x * 2` exported with a fixed batch size: `x, y: [batch_size, 4]`.
+pub fn fixed_batch_doubling_model(batch_size: i64) -> Vec<u8> {
+    let float = |name| value_info(name, ELEM_FLOAT, &[Dim::Fixed(batch_size), Dim::Fixed(4)]);
+    model(
+        &[node("Mul", &["x", "two"], &["y"], &[])],
+        &[scalar_initializer("two", 2.0)],
+        &[float("x")],
+        &[float("y")],
+    )
+}
+
+/// Fixed batch size of 4: `x: [4, 4]`, output `y: [1, 4]`, the per-column
+/// maximum over all four rows, padded rows included.
+pub fn fixed_batch_column_max_model() -> Vec<u8> {
+    model(
+        &[node(
+            "ReduceMax",
+            &["x"],
+            &["y"],
+            &[Attr::Ints("axes", &[0]), Attr::Int("keepdims", 1)],
+        )],
+        &[],
+        &[value_info("x", ELEM_FLOAT, &[Dim::Fixed(4), Dim::Fixed(4)])],
+        &[value_info("y", ELEM_FLOAT, &[Dim::Fixed(1), Dim::Fixed(4)])],
+    )
+}
+
+/// Fixed batch size of 4 with a data-dependent output: `y` (`i64`,
+/// `[nonzero, 2]`) lists the `[row, column]` of every non-zero element of `x: [4, 4]`.
+pub fn fixed_batch_nonzero_model() -> Vec<u8> {
+    model(
+        &[
+            node("NonZero", &["x"], &["positions"], &[]),
+            node("Transpose", &["positions"], &["y"], &[]),
+        ],
+        &[],
+        &[value_info("x", ELEM_FLOAT, &[Dim::Fixed(4), Dim::Fixed(4)])],
+        &[value_info(
+            "y",
+            ELEM_INT64,
+            &[Dim::Named("nonzero"), Dim::Fixed(2)],
+        )],
+    )
+}
+
+/// `y = x` where `x` is `[N, 4]` but `y` declares axis 0 as another dimension, `M`.
+pub fn renamed_batch_axis_model() -> Vec<u8> {
+    model(
+        &[node("Identity", &["x"], &["y"], &[])],
+        &[],
+        &[batched_float("x")],
+        &[value_info(
+            "y",
+            ELEM_FLOAT,
+            &[Dim::Named("M"), Dim::Fixed(4)],
+        )],
+    )
+}
+
+/// `y = x * 2` for `x: [N, sequence]`, with `y` declared `[N, unk__0]`, an
+/// exporter-generated name that does not link it to `sequence`.
+pub fn unlinked_sequence_model() -> Vec<u8> {
+    model(
+        &[node("Mul", &["x", "two"], &["y"], &[])],
+        &[scalar_initializer("two", 2.0)],
+        &[value_info(
+            "x",
+            ELEM_FLOAT,
+            &[Dim::Batch, Dim::Named("sequence")],
+        )],
+        &[value_info(
+            "y",
+            ELEM_FLOAT,
+            &[Dim::Batch, Dim::Named("unk__0")],
+        )],
+    )
+}
+
+/// `y = x * 2` for `x: [N, "sequence"]`, with no shape declared for `y`.
+///
+/// `y` is reshaped to the shape of `x` filtered through `Compress`, whose
+/// output length is data-dependent, so ONNX Runtime cannot infer even the
+/// rank of `y`.
+pub fn unshaped_sequence_output_model() -> Vec<u8> {
+    model(
+        &[
+            node("Mul", &["x", "two"], &["doubled"], &[]),
+            node("Shape", &["x"], &["shape"], &[]),
+            node("Greater", &["shape", "zero"], &["keep"], &[]),
+            node("Compress", &["shape", "keep"], &["kept_shape"], &[]),
+            node("Reshape", &["doubled", "kept_shape"], &["y"], &[]),
+        ],
+        &[
+            scalar_initializer("two", 2.0),
+            int64_initializer("zero", &[], &[0]),
+        ],
+        &[value_info(
+            "x",
+            ELEM_FLOAT,
+            &[Dim::Batch, Dim::Named("sequence")],
+        )],
+        &[unshaped_value_info("y", ELEM_FLOAT)],
+    )
+}
+
+/// Inputs `a: [2, 4]` and `b: [3, 4]` with different fixed batch sizes.
+pub fn conflicting_fixed_batch_model() -> Vec<u8> {
+    model(
+        &[
+            node("Identity", &["a"], &["a_out"], &[]),
+            node("Identity", &["b"], &["b_out"], &[]),
+        ],
+        &[],
+        &[
+            value_info("a", ELEM_FLOAT, &[Dim::Fixed(2), Dim::Fixed(4)]),
+            value_info("b", ELEM_FLOAT, &[Dim::Fixed(3), Dim::Fixed(4)]),
+        ],
+        &[
+            value_info("a_out", ELEM_FLOAT, &[Dim::Fixed(2), Dim::Fixed(4)]),
+            value_info("b_out", ELEM_FLOAT, &[Dim::Fixed(3), Dim::Fixed(4)]),
+        ],
     )
 }

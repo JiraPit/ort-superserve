@@ -266,15 +266,22 @@ mod worker_failures {
 
     #[tokio::test]
     async fn worker_survives_a_panic_while_processing_a_batch() {
+        use ort_superserve::{Split, split_batch_axis};
+
         let model = ModelFixture::squeezing();
+        // A lone request squeezes to a scalar output with no batch axis; the
+        // custom split panics the worker while it slices such a batch.
+        let split = Split::custom(|output, ctx| {
+            assert!(output.ndim() > 0, "scalar output has no batch axis");
+            split_batch_axis(output, ctx)
+        });
         let config = ServerConfig::new()
             .with_num_sessions(1)
             .with_max_batch_size(2)
-            .with_max_wait_time(Duration::from_millis(200));
+            .with_max_wait_time(Duration::from_millis(200))
+            .with_output_split("y", split);
         let server = start_server(&model, config).await;
 
-        // A lone request squeezes to a scalar output with no batch axis, which
-        // panics the worker while it slices the batch.
         let lone = server.infer(TestInput::from_values(vec![1.0])).await;
         // A batch of two keeps its batch axis; the only worker must still serve it.
         let (a, b) = tokio::join!(

@@ -1,7 +1,7 @@
 use anyhow::Result;
 use image::{DynamicImage, GenericImageView, ImageBuffer, Rgb};
-use ndarray::{Array3, ArrayD, ArrayViewD, Axis};
-use ort_superserve::{Input, Output, Server, ServerConfig, create_env};
+use ndarray::Array3;
+use ort_superserve::{Input, Output, Outputs, Server, ServerConfig, create_env};
 use std::path::Path;
 
 pub struct PersonDetectionInput {
@@ -59,12 +59,6 @@ impl Input for PersonDetectionInput {
         })
         .await?
     }
-
-    fn batch(items: Vec<Self::Preprocessed>) -> Result<ArrayD<f32>> {
-        let tensors: Vec<_> = items.iter().map(|t| t.view()).collect();
-        let batched = ndarray::stack(Axis(0), &tensors)?;
-        Ok(batched.into_dyn())
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -84,7 +78,8 @@ pub struct PersonDetectionOutput {
 }
 
 impl Output<ImageScale> for PersonDetectionOutput {
-    async fn postprocess(raw: ArrayViewD<'_, f32>, scale: ImageScale) -> Result<Self> {
+    async fn postprocess(outputs: Outputs, scale: ImageScale) -> Result<Self> {
+        let raw = outputs.first::<f32>()?;
         let shape = raw.shape().to_vec();
         let num_anchors = shape[1];
 

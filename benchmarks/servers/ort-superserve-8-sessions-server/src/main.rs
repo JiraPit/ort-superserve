@@ -8,9 +8,9 @@ use tokio::time::Duration;
 
 use anyhow::Result;
 use axum::{Json, Router, extract::State, routing::post};
-use ndarray::{ArrayD, ArrayViewD};
+use ndarray::ArrayD;
 use ort::session::builder::GraphOptimizationLevel;
-use ort_superserve::{Input, Output, Server, ServerConfig, create_env, helpers::batch_array};
+use ort_superserve::{Input, Output, Outputs, Server, ServerConfig, create_env};
 use shared::{ImageInput, ImageOutput, apply_imagenet_normalization};
 use tower_http::cors::CorsLayer;
 
@@ -30,10 +30,6 @@ impl Input for MyInput {
             tokio::task::spawn_blocking(move || apply_imagenet_normalization(tensor)).await?;
         Ok((tensor, ()))
     }
-
-    fn batch(items: Vec<Self::Preprocessed>) -> Result<ArrayD<f32>> {
-        batch_array(&items)
-    }
 }
 
 /// Output wrapper implementing the ort-superserve `Output` trait.
@@ -43,7 +39,8 @@ struct MyOutput {
 }
 
 impl Output for MyOutput {
-    async fn postprocess(raw: ArrayViewD<'_, f32>, _context: ()) -> Result<Self> {
+    async fn postprocess(outputs: Outputs, _context: ()) -> Result<Self> {
+        let raw = outputs.first::<f32>()?;
         let logits: Vec<f32> = raw.iter().copied().collect();
         let output = ImageOutput::from_logits(&logits);
         Ok(MyOutput {

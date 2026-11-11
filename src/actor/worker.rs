@@ -1,10 +1,12 @@
 use crate::config::ServerConfig;
 use crate::environment::Environment;
+use crate::io::Outputs;
+use crate::model::{ModelPlan, PreparedRequest, session_input, tensor_from_ort};
 use crate::session::SessionBuilder;
-use anyhow::Result;
-use ndarray::{ArrayD, IxDyn};
-use ort::session::{Session, SessionInputValue, SessionInputs};
-use ort::value::TensorRef;
+use crate::tensor::Tensor;
+use anyhow::{Context, Result};
+use ort::session::{Session, SessionInputs};
+use std::collections::HashMap;
 use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 use std::thread;
@@ -84,117 +86,75 @@ impl WorkerTask {
 
     /// Process a single batch message.
     ///
-    /// Runs inference on the batched tensor and sends sliced outputs
-    /// back to the batcher for postprocessing.
+    /// Assembles the batched input tensors, runs inference, splits the outputs
+    /// per request and sends them back to the batcher for postprocessing.
     fn process_message(worker_id: usize, session: &mut Session, msg: WorkerMessage) {
         let WorkerMessage {
-            batched_tensor,
-            input_name,
-            output_name,
+            requests,
+            plan,
             result_tx,
         } = msg;
 
         tracing::info!("Worker {}: Processing inference...", worker_id);
+        let num_requests = requests.len();
 
-        // Create input tensor (zero-copy view)
-        let input_value = match TensorRef::from_array_view(batched_tensor.view()) {
-            Ok(v) => v.into_dyn(),
-            Err(e) => {
-                tracing::error!("Worker {}: Failed to create input tensor: {e:#}", worker_id);
-                let _ = result_tx.send(Err(anyhow::Error::msg(e.to_string())));
-                return;
-            }
-        };
-
-        // Create input map
-        let inputs: SessionInputs = SessionInputs::ValueMap(vec![(
-            std::borrow::Cow::Borrowed(&input_name),
-            SessionInputValue::from(input_value),
-        )]);
-
-        // Run inference
-        let outputs = match session.run(inputs) {
-            Ok(o) => o,
-            Err(e) => {
-                tracing::error!("Worker {}: Inference failed: {e:#}", worker_id);
-                let _ = result_tx.send(Err(anyhow::Error::msg(e.to_string())));
-                return;
-            }
-        };
-
-        // Extract output tensor
-        let output_tensor = match outputs.get(&*output_name) {
-            Some(v) => v,
-            None => {
-                tracing::error!(
-                    "Worker {}: Output tensor '{}' not found",
-                    worker_id,
-                    output_name
-                );
-                let _ = result_tx.send(Err(anyhow::Error::msg(format!(
-                    "Output tensor '{}' not found",
-                    output_name
-                ))));
-                return;
-            }
-        };
-
-        // Extract tensor data
-        let (shape, data) = match output_tensor.try_extract_tensor::<f32>() {
-            Ok((s, d)) => (s, d),
-            Err(e) => {
-                tracing::error!("Worker {}: Failed to extract tensor: {e:#}", worker_id);
-                let _ = result_tx.send(Err(anyhow::Error::msg(e.to_string())));
-                return;
-            }
-        };
-
-        // Slice tensor by batch dimension
-        let shape_usize: Vec<usize> = shape.iter().map(|&x| x as usize).collect();
-        let batch_size = shape_usize[0];
-
-        let batch_view = match ndarray::ArrayView::from_shape(IxDyn(&shape_usize), data) {
-            Ok(v) => v,
-            Err(e) => {
-                tracing::error!("Worker {}: Failed to create array view: {e:#}", worker_id);
-                let _ = result_tx.send(Err(anyhow::Error::msg(e.to_string())));
-                return;
-            }
-        };
-
-        // Create sliced outputs for each batch item
-        let mut sliced_outputs = Vec::with_capacity(batch_size);
-        for idx in 0..batch_size {
-            let single_output = batch_view.index_axis(ndarray::Axis(0), idx);
-            sliced_outputs.push(
-                ArrayD::from_shape_vec(
-                    IxDyn(&shape_usize[1..]),
-                    single_output.iter().cloned().collect(),
-                )
-                .unwrap(),
-            );
+        let result = Self::run_batch(session, &plan, requests);
+        match &result {
+            Ok(_) => tracing::info!(
+                "Worker {}: Successfully processed batch of {} items",
+                worker_id,
+                num_requests
+            ),
+            Err(e) => tracing::error!("Worker {}: Batch failed: {e:#}", worker_id),
         }
+        let _ = result_tx.send(result);
+    }
 
-        tracing::info!(
-            "Worker {}: Successfully processed batch of {} items",
-            worker_id,
-            batch_size
-        );
+    fn run_batch(
+        session: &mut Session,
+        plan: &ModelPlan,
+        requests: Vec<PreparedRequest>,
+    ) -> Result<Vec<Outputs>> {
+        plan.check_outputs()?;
+        let batch = plan.assemble(requests)?;
 
-        let _ = result_tx.send(Ok(sliced_outputs));
+        let inputs = batch
+            .tensors
+            .iter()
+            .map(|(name, tensor)| {
+                Ok((
+                    std::borrow::Cow::Borrowed(&**name),
+                    session_input(tensor)
+                        .with_context(|| format!("Failed to create input tensor '{name}'"))?,
+                ))
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        let outputs = session
+            .run(SessionInputs::<0>::ValueMap(inputs))
+            .map_err(|e| anyhow::Error::msg(e.to_string()))?;
+
+        let mut raw: HashMap<Arc<str>, Tensor> = HashMap::new();
+        for name in plan.needed_outputs() {
+            if let Some(value) = outputs.get(&**name) {
+                raw.insert(name.clone(), tensor_from_ort(name, value)?);
+            }
+        }
+        drop(outputs);
+
+        plan.split_outputs(&batch, &raw)
     }
 }
 
 /// Message sent from the batcher to a worker.
 ///
-/// Contains the batched input tensor and metadata for inference.
+/// Contains the validated requests of one batch and the channel for the
+/// per-request outputs.
 pub struct WorkerMessage {
-    /// Batched input tensor with shape `[batch_size, ...]`.
-    pub batched_tensor: ArrayD<f32>,
-    /// Name of the ONNX input tensor.
-    pub input_name: Arc<str>,
-    /// Name of the ONNX output tensor.
-    pub output_name: Arc<str>,
-    /// Channel to send sliced outputs back to batcher.
-    pub result_tx: tokio::sync::oneshot::Sender<Result<Vec<ArrayD<f32>>>>,
+    /// The batch's requests, validated against the model.
+    pub(crate) requests: Vec<PreparedRequest>,
+    /// How to batch the inputs and split the outputs.
+    pub(crate) plan: Arc<ModelPlan>,
+    /// Channel to send the per-request outputs back to the batcher.
+    pub(crate) result_tx: tokio::sync::oneshot::Sender<Result<Vec<Outputs>>>,
 }

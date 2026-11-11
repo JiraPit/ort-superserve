@@ -1,12 +1,14 @@
 //! Helper functions for common operations.
 //!
-//! This module provides utility functions to simplify implementing the
-//! [`Input`](crate::Input) and [`Output`](crate::Output) traits for common use cases.
+//! This module provides utility functions for working with batches of arrays.
+//! The server batches inputs itself, so these are only needed when you build
+//! batched tensors by hand, e.g. inside a [`Split::Custom`](crate::Split::Custom)
+//! function or outside the server.
 
 use anyhow::Result;
 use ndarray::{ArrayD, Axis, Dimension};
 
-/// Batches multiple arrays along the first dimension.
+/// Batches multiple arrays of any element type along the first dimension.
 ///
 /// This function takes a slice of arrays and stacks them along a new dimension
 /// (axis 0), producing a single batched array with shape `[n, ...]` where `n`
@@ -27,9 +29,10 @@ use ndarray::{ArrayD, Axis, Dimension};
 /// assert_eq!(batched.shape(), &[2, 3, 224, 224]);
 /// # Ok::<(), anyhow::Error>(())
 /// ```
-pub fn batch_array<A, D>(items: &[ndarray::ArrayBase<A, D>]) -> Result<ArrayD<f32>>
+pub fn batch_array<T, A, D>(items: &[ndarray::ArrayBase<A, D>]) -> Result<ArrayD<T>>
 where
-    A: ndarray::Data<Elem = f32>,
+    T: Clone,
+    A: ndarray::Data<Elem = T>,
     D: Dimension,
 {
     if items.is_empty() {

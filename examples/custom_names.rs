@@ -1,6 +1,6 @@
 use anyhow::Result;
-use ndarray::{Array3, ArrayD, ArrayViewD};
-use ort_superserve::{Input, Output, Server, ServerConfig, create_env, helpers::batch_array};
+use ndarray::Array3;
+use ort_superserve::{Input, Output, Outputs, Server, ServerConfig, create_env};
 
 struct ArrayInput {
     data: Array3<f32>,
@@ -14,10 +14,6 @@ impl Input for ArrayInput {
         // Preprocessing logic goes here
         Ok((self.data, ()))
     }
-
-    fn batch(items: Vec<Self::Preprocessed>) -> Result<ArrayD<f32>> {
-        batch_array(&items)
-    }
 }
 
 #[derive(Debug)]
@@ -27,7 +23,9 @@ struct ArrayOutput {
 }
 
 impl Output for ArrayOutput {
-    async fn postprocess(raw: ArrayViewD<'_, f32>, _context: ()) -> Result<Self> {
+    async fn postprocess(outputs: Outputs, _context: ()) -> Result<Self> {
+        // Outputs can be read by name; "output" is the one selected below.
+        let raw = outputs.get::<f32>("output")?;
         // Postprocessing logic goes here
         Ok(ArrayOutput {
             values: raw.iter().cloned().collect(),

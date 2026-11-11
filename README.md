@@ -18,7 +18,13 @@ Orchestrates a pool of ONNX sessions with dynamic batching and parallel processi
 
 [`ort`]: https://crates.io/crates/ort
 
-- **Works with all input/output types**: The `Input` and `Output` traits let you define custom preprocessing and postprocessing logic for any data type—images, text, audio, video, or complex structs. You implement `preprocess`, `batch`, and `postprocess`; the library handles the orchestration, including passing per-request context (like the original image size) from preprocessing to postprocessing.
+- **Any inputs and outputs**: Models can have any number of named inputs and outputs of any common element type (`f32`, `f64`, `i8`–`i64`, `u8`–`u64`, `bool`). A detector returning separate `boxes`, `scores` and `i64` `labels` just works, and you control how each output is split back per request.
+
+- **Fixed batch sizes and variable shapes**: Models exported with a fixed batch size are served by padding partial batches up to that size. Requests with different lengths along a dynamic dimension (like token sequences) share a batch: each is padded to the longest one, with a configurable padding value per input, and outputs are cut back so every caller only sees its own positions. Padded rows never reach a caller.
+
+- **Safe by default**: A caller never silently receives someone else's data. Outputs whose axis 0 is not one entry per request (e.g. NMS results) are rejected with a clear error unless you configure how to split them.
+
+- **Custom pre/post-processing**: The `Input` and `Output` traits let you define preprocessing and postprocessing for any data type—images, text, audio, video, or complex structs. You implement `preprocess` and `postprocess`; the library handles batching and orchestration, including passing per-request context (like the original image size) from preprocessing to postprocessing.
 
 - **Session pool**: On multi-core servers, scaling a single ONNX session with more threads hits diminishing returns due to lock contention and memory bandwidth limits. A session pool runs multiple independent sessions in parallel, each with fewer threads, achieving near-linear scaling with core count. This is essential for high-throughput serving on modern hardware.
 
@@ -26,10 +32,17 @@ Orchestrates a pool of ONNX sessions with dynamic batching and parallel processi
 
 ## Quick Start
 
+```toml
+[dependencies]
+ort-superserve = "0.4"
+```
+
+The common case, one `f32` input and one `f32` output:
+
 ```rust
 use anyhow::Result;
-use ndarray::{ArrayD, ArrayViewD, Array3};
-use ort_superserve::{create_env, helpers::batch_array, Input, Output, Server, ServerConfig};
+use ndarray::Array3;
+use ort_superserve::{create_env, Input, Output, Outputs, Server, ServerConfig};
 
 // 1. Define your input type
 struct MyInput {
@@ -37,16 +50,12 @@ struct MyInput {
 }
 
 impl Input for MyInput {
-    type Preprocessed = Array3<f32>;
+    type Preprocessed = Array3<f32>; // any ndarray array, sent to the model's input
     type Context = ();
 
     async fn preprocess(self) -> Result<(Self::Preprocessed, Self::Context)> {
         // Your preprocessing logic (runs in parallel)
         Ok((self.data, ()))
-    }
-
-    fn batch(items: Vec<Self::Preprocessed>) -> Result<ArrayD<f32>> {
-        batch_array(&items)
     }
 }
 
@@ -56,8 +65,10 @@ struct MyOutput {
 }
 
 impl Output for MyOutput {
-    async fn postprocess(raw: ArrayViewD<'_, f32>, _context: ()) -> Result<Self> {
-        // Your postprocessing logic (runs in parallel)
+    async fn postprocess(outputs: Outputs, _context: ()) -> Result<Self> {
+        // Your postprocessing logic (runs in parallel). The batch axis is
+        // already removed: this is the output for this request only.
+        let raw = outputs.first::<f32>()?;
         Ok(MyOutput {
             scores: raw.iter().cloned().collect(),
         })
@@ -80,11 +91,88 @@ async fn main() -> Result<()> {
     let server = Server::<MyInput, MyOutput>::from_file("model.onnx", config).await?;
 
     let output = server.infer(MyInput { data: Array3::zeros((3, 224, 224)) }).await?;
-    
+
     server.shutdown();
     Ok(())
 }
 ```
+
+## Multiple inputs and outputs
+
+`preprocess` produces each request's `Inputs`: named tensors without the batch axis. Any `ndarray` array converts into an `Inputs` holding one unnamed tensor, which goes to the model's first input (or the one set with `with_input_name`). For several inputs, name them:
+
+```rust
+use ort_superserve::Inputs;
+
+impl Input for TextInput {
+    type Preprocessed = Inputs;
+    type Context = ();
+
+    async fn preprocess(self) -> Result<(Inputs, ())> {
+        let len = self.token_ids.len();
+        let inputs = Inputs::new()
+            .with("input_ids", Array1::from(self.token_ids))     // i64
+            .with("attention_mask", Array1::<i64>::ones(len));   // i64
+        Ok((inputs, ()))
+    }
+}
+```
+
+`postprocess` receives each request's `Outputs`. By default every model output is fetched; read them by name and element type:
+
+```rust
+impl Output for Detections {
+    async fn postprocess(outputs: Outputs, _context: ()) -> Result<Self> {
+        let boxes = outputs.get::<f32>("boxes")?;    // [num_boxes, 4]
+        let scores = outputs.get::<f32>("scores")?;  // [num_boxes]
+        let labels = outputs.get::<i64>("labels")?;  // [num_boxes]
+        // ...
+    }
+}
+```
+
+Use `ServerConfig::with_output(OutputSpec::new("name"))` (or `with_output_name("name")`) to fetch only some outputs, in the order you add them. Requests whose inputs do not match the model (missing or unknown names, wrong element type or shape) fail individually with a clear error; the rest of the batch is unaffected.
+
+## Splitting outputs per request
+
+Each output is split back into one tensor per request by its `Split`:
+
+- **`Split::BatchAxis`** (default): axis 0 is the batch axis; request `i` gets row `i`, with the batch axis removed. The row count must match the batch exactly, and when the model's metadata shows that axis 0 is *not* the batch dimension (a fixed size other than the batch size, a dynamic size in a fixed-batch model, or a differently named dimension), every request fails with an error instead of possibly receiving another caller's rows.
+- **`Split::BatchIndex`**: rows are assigned by a batch index, as produced by NMS models. The index can be a column of the output itself or a separate output; rows belonging to padded batch entries are dropped.
+- **`Split::Custom`**: your own function, receiving the whole batched output and a `SplitContext` describing the batch.
+
+```rust
+use ort_superserve::{OutputSpec, ServerConfig, Split};
+
+// NMS model whose `detections` rows are [batch_id, x1, y1, x2, y2, score, class]
+let config = ServerConfig::new()
+    .with_output_split("detections", Split::batch_index_column(0));
+
+// NMS model with separate outputs and a `batch_index` output
+let by_image = || Split::batch_index_from("batch_index", None);
+let config = ServerConfig::new()
+    .with_output_split("boxes", by_image())
+    .with_output_split("scores", by_image())
+    .with_output_split("labels", by_image());
+```
+
+## Fixed batch sizes and variable-length inputs
+
+**Fixed batch size.** If the model was exported with a fixed batch size, batches are capped at that size and partial batches are padded up to it. Padded rows are dropped before splitting, so they never reach a caller. Nothing needs to be configured.
+
+**Dynamic dimensions.** When an input has a dynamic dimension besides the batch one (e.g. `[batch, sequence]`), requests of different lengths share a batch: each is padded to the longest request with the input's padding value (`0` by default):
+
+```rust
+use ort_superserve::{InputSpec, ServerConfig};
+
+let config = ServerConfig::new()
+    .with_input(InputSpec::new("input_ids").with_pad_value(0.0))      // pad token id
+    .with_input(InputSpec::new("attention_mask").with_pad_value(0.0)); // ignore padding
+```
+
+Every output axis that follows a padded dimension is cut back to the request's own length, so a caller only gets the positions that belong to its request. Axes are matched by their symbolic dimension name in the model (e.g. both input and output use `sequence`). If the exporter generated the names instead (like `unk__0`), the server refuses to start and names the axis; declare it with `OutputSpec::with_crop_axis` or `OutputSpec::with_uncropped_axis`. Both kinds of padding work together.
+
+Inputs that carry no batch axis (e.g. an NMS threshold scalar) are passed through unchanged; mark them with `InputSpec::with_batched(false)` if the model does not declare them as scalars.
 
 ## Per-request context
 
@@ -102,16 +190,12 @@ impl Input for DetectionInput {
         let tensor = resize_and_normalize(&self.image, (640, 640));
         Ok((tensor, ImageScale { original, model_input: (640, 640) }))
     }
-
-    fn batch(items: Vec<Self::Preprocessed>) -> Result<ArrayD<f32>> {
-        batch_array(&items)
-    }
 }
 
 impl Output<ImageScale> for Detections {
-    async fn postprocess(raw: ArrayViewD<'_, f32>, scale: ImageScale) -> Result<Self> {
+    async fn postprocess(outputs: Outputs, scale: ImageScale) -> Result<Self> {
         // Decode boxes in model space, then rescale them with `scale`
-        decode_boxes(raw, scale)
+        decode_boxes(outputs.first::<f32>()?, scale)
     }
 }
 ```
@@ -133,6 +217,9 @@ let config = ServerConfig::new()
     .with_min_batch_size(1)                            // Minimum batch size
     .with_max_wait_time(Duration::from_millis(10))     // Max wait for batching
     .with_execution_provider(ExecutionProvider::Cpu)   // CPU execution (default)
+    .with_input_name("images")                         // Input for unnamed tensors (default: first)
+    .with_pad_value("images", 0.0)                     // Padding value for an input (default: 0)
+    .with_output_name("logits")                        // Fetch only these outputs (default: all)
     .with_environment(env);                            // ONNX Runtime environment (see below)
 ```
 
@@ -160,49 +247,11 @@ let classifier = Server::<ImageInput, Classes>::from_file(
 
 ## Loading Models
 
-```rust
-// From file
-let server = Server::<MyInput, MyOutput>::from_file("model.onnx", config).await?;
-
-// From URL
-let server = Server::<MyInput, MyOutput>::from_url("https://example.com/model.onnx", config).await?;
-```
-
-Both constructors return once every session in the pool has loaded the model, and fail if any session cannot be initialized. `from_url` downloads the model to a temporary file and deletes it after startup.
+Load a model with `Server::from_file` or `Server::from_url`. Both return once every session in the pool has loaded the model, and fail if any session cannot be initialized. `from_url` downloads the model to a temporary file and deletes it after startup.
 
 ## Axum Integration
 
-Share the server across all HTTP handlers using `Arc`:
-
-```rust
-use std::sync::Arc;
-use axum::{Router, routing::post, Json, extract::State};
-use ort_superserve::{Server, create_env};
-
-async fn infer_handler(
-    State(server): State<Arc<Server<MyInput, MyOutput>>>,
-    Json(input): Json<MyInput>,
-) -> Json<MyOutput> {
-    Json(server.infer(input).await.unwrap())
-}
-
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    let env = create_env()?;
-    let server = Arc::new(Server::from_file("model.onnx", config.with_environment(env)).await?);
-    
-    let app = Router::new()
-        .route("/infer", post(infer_handler))
-        .with_state(server);
-
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await?;
-    axum::serve(listener, app).await?;
-
-    Ok(())
-}
-```
-
-See `examples/axum_server.rs` for a complete example with graceful shutdown.
+Share the server across all HTTP handlers using `Arc`. See `examples/axum_server.rs` for a complete example with graceful shutdown.
 
 ## License
 

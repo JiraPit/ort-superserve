@@ -1,9 +1,10 @@
 use crate::actor::command::{Command, CommandInput};
 use crate::actor::worker::WorkerMessage;
 use crate::config::ServerConfig;
+use crate::io::Outputs;
+use crate::model::ModelPlan;
 use crate::traits::{Input, Output};
 use anyhow::Result;
-use ndarray::ArrayD;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::task::JoinSet;
@@ -13,8 +14,8 @@ use tokio::task::JoinSet;
 /// The batcher runs as a single Tokio task and performs:
 /// 1. Collects incoming requests until batch is full or timeout
 /// 2. Runs preprocessing in parallel using `JoinSet`
-/// 3. Batches preprocessed inputs into a single tensor
-/// 4. Sends batched tensor to worker pool
+/// 3. Converts preprocessed items into model inputs and validates each request
+/// 4. Sends the batch to the worker pool, which stacks, runs and splits it
 /// 5. Receives outputs and runs postprocessing in parallel, giving each
 ///    request the context its preprocessing produced
 /// 6. Sends results back to callers via oneshot channels
@@ -28,21 +29,22 @@ impl BatcherTask {
     /// * `command_rx` - Channel for receiving commands from the server.
     /// * `worker_txs` - Per-worker channels for lock-free dispatch.
     /// * `config` - Server configuration.
-    /// * `input_name` - Name of the ONNX input tensor.
-    /// * `output_name` - Name of the ONNX output tensor.
+    /// * `plan` - How the model's inputs are batched and outputs split.
+    /// * `max_batch_size` - Largest batch to collect: the configured maximum,
+    ///   capped at the model's fixed batch size if it has one.
     ///
     /// # Returns
     ///
     /// A `JoinHandle` for the spawned task.
-    pub fn spawn<I: Input, O: Output<I::Context>>(
+    pub(crate) fn spawn<I: Input, O: Output<I::Context>>(
         command_rx: kanal::AsyncReceiver<Command<I, O>>,
         worker_txs: Vec<kanal::AsyncSender<WorkerMessage>>,
         config: Arc<ServerConfig>,
-        input_name: Arc<str>,
-        output_name: Arc<str>,
+        plan: Arc<ModelPlan>,
+        max_batch_size: usize,
     ) -> tokio::task::JoinHandle<()> {
         tokio::spawn(async move {
-            let mut batch_buffer: Vec<Command<I, O>> = Vec::with_capacity(config.max_batch_size);
+            let mut batch_buffer: Vec<Command<I, O>> = Vec::with_capacity(max_batch_size);
             let num_workers = worker_txs.len();
             let mut dispatch_index: usize = 0;
 
@@ -56,7 +58,7 @@ impl BatcherTask {
                 let sleep = tokio::time::sleep(config.max_wait_time);
                 tokio::pin!(sleep);
 
-                while batch_buffer.len() < config.max_batch_size {
+                while batch_buffer.len() < max_batch_size {
                     tokio::select! {
                         cmd = command_rx.recv() => match cmd {
                             Ok(c) => batch_buffer.push(c),
@@ -173,9 +175,21 @@ impl BatcherTask {
                     continue;
                 }
 
-                // Batch preprocessed inputs
-                let batched_tensor = match I::batch(preprocessed_items) {
-                    Ok(t) => t,
+                // Turn the preprocessed items into each request's model inputs
+                let item_count = preprocessed_items.len();
+                let request_inputs = match I::batch(preprocessed_items) {
+                    Ok(inputs) if inputs.len() == item_count => inputs,
+                    Ok(inputs) => {
+                        let message = format!(
+                            "Batching failed: Input::batch returned {} inputs for {item_count} requests",
+                            inputs.len()
+                        );
+                        tracing::error!("Batcher: {message}");
+                        for responder in responders {
+                            let _ = responder.send(Err(anyhow::Error::msg(message.clone())));
+                        }
+                        continue;
+                    }
                     Err(e) => {
                         tracing::error!("Batcher: Batching failed: {e:#}");
                         for responder in responders {
@@ -186,14 +200,41 @@ impl BatcherTask {
                     }
                 };
 
+                // Validate each request against the model; an invalid request
+                // fails alone instead of failing the whole batch.
+                let mut requests = Vec::with_capacity(item_count);
+                let mut kept_contexts = Vec::with_capacity(item_count);
+                let mut kept_responders = Vec::with_capacity(item_count);
+                for ((inputs, context), responder) in
+                    request_inputs.into_iter().zip(contexts).zip(responders)
+                {
+                    match plan.prepare_request(inputs) {
+                        Ok(request) => {
+                            requests.push(request);
+                            kept_contexts.push(context);
+                            kept_responders.push(responder);
+                        }
+                        Err(e) => {
+                            tracing::error!("Batcher: Invalid request inputs: {e:#}");
+                            let _ = responder
+                                .send(Err(anyhow::Error::msg(format!("Invalid inputs: {e:#}"))));
+                        }
+                    }
+                }
+                let contexts = kept_contexts;
+                let responders = kept_responders;
+
+                if requests.is_empty() {
+                    continue;
+                }
+
                 // Send to worker pool (round-robin dispatch)
                 let (result_tx, result_rx) =
-                    tokio::sync::oneshot::channel::<Result<Vec<ArrayD<f32>>>>();
+                    tokio::sync::oneshot::channel::<Result<Vec<Outputs>>>();
 
                 let worker_msg = WorkerMessage {
-                    batched_tensor,
-                    input_name: input_name.clone(),
-                    output_name: output_name.clone(),
+                    requests,
+                    plan: Arc::clone(&plan),
                     result_tx,
                 };
 
@@ -249,7 +290,7 @@ impl BatcherTask {
                     sliced_outputs.into_iter().zip(contexts).zip(responders)
                 {
                     postprocess_tasks.spawn(async move {
-                        let result = O::postprocess(raw_output.view(), context).await;
+                        let result = O::postprocess(raw_output, context).await;
                         let _ = responder.send(result);
                     });
                 }

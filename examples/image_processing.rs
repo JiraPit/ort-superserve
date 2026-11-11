@@ -9,8 +9,8 @@
 
 use anyhow::Result;
 use image::{DynamicImage, ImageBuffer, Rgb};
-use ndarray::{Array3, ArrayD, ArrayViewD};
-use ort_superserve::{Input, Output, Server, ServerConfig, create_env, helpers::batch_array};
+use ndarray::Array3;
+use ort_superserve::{Input, Output, Outputs, Server, ServerConfig, create_env};
 use std::path::PathBuf;
 
 /// Input type that holds a dynamic image.
@@ -55,10 +55,6 @@ impl Input for ImageInput {
         })
         .await?
     }
-
-    fn batch(items: Vec<Self::Preprocessed>) -> Result<ArrayD<f32>> {
-        batch_array(&items)
-    }
 }
 
 #[derive(Debug)]
@@ -68,7 +64,8 @@ struct ClassificationOutput {
 }
 
 impl Output for ClassificationOutput {
-    async fn postprocess(raw: ArrayViewD<'_, f32>, _context: ()) -> Result<Self> {
+    async fn postprocess(outputs: Outputs, _context: ()) -> Result<Self> {
+        let raw = outputs.first::<f32>()?;
         // `raw` holds the class scores for this one image (batch axis already removed).
         let (class_id, &confidence) = raw
             .iter()

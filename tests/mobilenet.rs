@@ -4,10 +4,8 @@
 
 use anyhow::Result;
 use futures::future::join_all;
-use ndarray::{Array3, ArrayD, ArrayViewD};
-use ort_superserve::{
-    Environment, Input, Output, Server, ServerConfig, create_env, helpers::batch_array,
-};
+use ndarray::Array3;
+use ort_superserve::{Environment, Input, Output, Outputs, Server, ServerConfig, create_env};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -59,17 +57,13 @@ impl Input for ImageInput {
         });
         Ok((tensor, ()))
     }
-
-    fn batch(items: Vec<Self::Preprocessed>) -> Result<ArrayD<f32>> {
-        batch_array(&items)
-    }
 }
 
 struct Logits(Vec<f32>);
 
 impl Output for Logits {
-    async fn postprocess(raw: ArrayViewD<'_, f32>, _context: ()) -> Result<Self> {
-        Ok(Logits(raw.iter().copied().collect()))
+    async fn postprocess(outputs: Outputs, _context: ()) -> Result<Self> {
+        Ok(Logits(outputs.first::<f32>()?.iter().copied().collect()))
     }
 }
 

@@ -8,8 +8,8 @@
 //! - Wrapping all CPU-bound work in `spawn_blocking`
 
 use anyhow::Result;
-use ndarray::{Array1, ArrayD, ArrayViewD};
-use ort_superserve::{Input, Output, Server, ServerConfig, create_env, helpers::batch_array};
+use ndarray::Array1;
+use ort_superserve::{Input, Output, Outputs, Server, ServerConfig, create_env};
 use std::path::PathBuf;
 
 /// Raw audio samples loaded from WAV file.
@@ -83,10 +83,6 @@ impl Input for AudioInput {
         })
         .await?
     }
-
-    fn batch(items: Vec<Self::Preprocessed>) -> Result<ArrayD<f32>> {
-        batch_array(&items)
-    }
 }
 
 /// Linear interpolation resampling.
@@ -124,7 +120,8 @@ struct AudioOutput {
 }
 
 impl Output for AudioOutput {
-    async fn postprocess(raw: ArrayViewD<'_, f32>, _context: ()) -> Result<Self> {
+    async fn postprocess(outputs: Outputs, _context: ()) -> Result<Self> {
+        let raw = outputs.first::<f32>()?;
         Ok(AudioOutput {
             embedding: raw.iter().cloned().collect(),
         })

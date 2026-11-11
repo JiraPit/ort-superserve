@@ -1,6 +1,7 @@
 use crate::actor::{BatcherTask, Command, WorkerMessage, WorkerTask};
 use crate::config::ServerConfig;
 use crate::environment::{Environment, create_env};
+use crate::model::ModelPlan;
 use crate::session::SessionBuilder;
 use crate::traits::{Input, Output};
 use anyhow::{Context, Result};
@@ -22,8 +23,8 @@ use std::sync::Arc;
 /// # Example
 ///
 /// ```rust,no_run
-/// use ort_superserve::{Server, ServerConfig, Input, Output, create_env};
-/// use ndarray::{ArrayD, ArrayViewD, Array3, Axis};
+/// use ort_superserve::{Server, ServerConfig, Input, Output, Outputs, create_env};
+/// use ndarray::Array3;
 /// use anyhow::Result;
 ///
 /// struct MyInput { data: Array3<f32> }
@@ -31,16 +32,12 @@ use std::sync::Arc;
 ///     type Preprocessed = Array3<f32>;
 ///     type Context = ();
 ///     async fn preprocess(self) -> Result<(Self::Preprocessed, Self::Context)> { Ok((self.data, ())) }
-///     fn batch(items: Vec<Self::Preprocessed>) -> Result<ArrayD<f32>> {
-///         let views: Vec<_> = items.iter().map(|a| a.view()).collect();
-///         Ok(ndarray::stack(Axis(0), &views)?.into_dyn())
-///     }
 /// }
 ///
 /// struct MyOutput { result: Vec<f32> }
 /// impl Output for MyOutput {
-///     async fn postprocess(raw: ArrayViewD<'_, f32>, _context: ()) -> Result<Self> {
-///         Ok(MyOutput { result: raw.iter().cloned().collect() })
+///     async fn postprocess(outputs: Outputs, _context: ()) -> Result<Self> {
+///         Ok(MyOutput { result: outputs.first::<f32>()?.iter().cloned().collect() })
 ///     }
 /// }
 ///
@@ -94,37 +91,21 @@ impl<I: Input, O: Output<I::Context>> Server<I, O> {
     ///
     /// # Errors
     ///
-    /// Returns an error if the model file cannot be loaded, any session in
-    /// the pool fails to initialize, or the config has no environment and
-    /// one already exists in this process.
+    /// Returns an error if the model file cannot be loaded, the model or the
+    /// input options can never be served (e.g. no inputs, conflicting fixed
+    /// batch sizes, an [`InputSpec`](crate::InputSpec) for an unknown input),
+    /// a selected output has a dynamic axis that may or may not follow a
+    /// padded input dimension (see
+    /// [Outputs of models with padded inputs](crate::OutputSpec#outputs-of-models-with-padded-inputs)),
+    /// any session in the pool fails to initialize, or the config has no
+    /// environment and one already exists in this process. Outputs that
+    /// cannot be split per request do not prevent startup: they are logged
+    /// and every request then fails with an error explaining why.
     pub async fn from_file<P: AsRef<Path>>(path: P, config: ServerConfig) -> Result<Self> {
         let environment = Self::resolve_environment(&config)?;
         let path_str = path.as_ref().to_string_lossy().to_string();
 
-        let session = SessionBuilder::build(&environment, &path_str, &config)
-            .map_err(|e| anyhow::Error::msg(e.to_string()))?;
-
-        let input_name: Arc<str> = match config.input_name {
-            Some(ref name) => name.clone().into(),
-            None => session
-                .inputs()
-                .first()
-                .map(|i| i.name().into())
-                .context("Model has no inputs")?,
-        };
-
-        let output_name: Arc<str> = match config.output_name {
-            Some(ref name) => name.clone().into(),
-            None => session
-                .outputs()
-                .first()
-                .map(|o| o.name().into())
-                .context("Model has no outputs")?,
-        };
-
-        drop(session);
-
-        Self::start(environment, path_str, config, input_name, output_name).await
+        Self::probe_and_start(environment, path_str, config).await
     }
 
     /// Download a model from a URL and start the inference server.
@@ -144,9 +125,8 @@ impl<I: Input, O: Output<I::Context>> Server<I, O> {
     ///
     /// # Errors
     ///
-    /// Returns an error if the download fails, the model cannot be loaded,
-    /// any session in the pool fails to initialize, or the config has no
-    /// environment and one already exists in this process.
+    /// Returns an error if the download fails, or for any of the reasons
+    /// [`from_file`](Self::from_file) fails.
     pub async fn from_url(url: &str, config: ServerConfig) -> Result<Self> {
         let environment = Self::resolve_environment(&config)?;
         let temp_dir = std::env::temp_dir();
@@ -180,7 +160,7 @@ impl<I: Input, O: Output<I::Context>> Server<I, O> {
 
         // Every session has loaded the model once startup finishes, successfully
         // or not, so the downloaded file is no longer needed.
-        let result = Self::start_from_downloaded(environment, model_path_str, config).await;
+        let result = Self::probe_and_start(environment, model_path_str, config).await;
         if let Err(e) = std::fs::remove_file(&model_path) {
             tracing::warn!(
                 "Failed to remove downloaded model {}: {e}",
@@ -190,36 +170,18 @@ impl<I: Input, O: Output<I::Context>> Server<I, O> {
         result
     }
 
-    /// Start the server from a model file downloaded by [`Self::from_url`].
-    async fn start_from_downloaded(
+    /// Inspect the model with a temporary session, then start the server.
+    async fn probe_and_start(
         environment: Environment,
-        model_path_str: String,
+        model_path: String,
         config: ServerConfig,
     ) -> Result<Self> {
-        let session = SessionBuilder::build(&environment, &model_path_str, &config)
+        let session = SessionBuilder::build(&environment, &model_path, &config)
             .map_err(|e| anyhow::Error::msg(e.to_string()))?;
-
-        let input_name: Arc<str> = match config.input_name {
-            Some(ref name) => name.clone().into(),
-            None => session
-                .inputs()
-                .first()
-                .map(|i| i.name().into())
-                .context("Model has no inputs")?,
-        };
-
-        let output_name: Arc<str> = match config.output_name {
-            Some(ref name) => name.clone().into(),
-            None => session
-                .outputs()
-                .first()
-                .map(|o| o.name().into())
-                .context("Model has no outputs")?,
-        };
-
+        let plan = ModelPlan::new(&session, &config)?;
         drop(session);
 
-        Self::start(environment, model_path_str, config, input_name, output_name).await
+        Self::start(environment, model_path, config, plan).await
     }
 
     /// Use the configured environment, or create one if none was given.
@@ -239,10 +201,28 @@ impl<I: Input, O: Output<I::Context>> Server<I, O> {
         environment: Environment,
         model_path: String,
         config: ServerConfig,
-        input_name: Arc<str>,
-        output_name: Arc<str>,
+        plan: ModelPlan,
     ) -> Result<Self> {
+        let max_batch_size = match plan.batch_size() {
+            Some(model_batch) if model_batch < config.max_batch_size => {
+                tracing::warn!(
+                    "The model has a fixed batch size of {model_batch}; batches are capped at \
+                     {model_batch} instead of max_batch_size {}.",
+                    config.max_batch_size
+                );
+                model_batch
+            }
+            _ => config.max_batch_size,
+        };
+        if config.min_batch_size > max_batch_size {
+            tracing::warn!(
+                "min_batch_size {} exceeds the largest possible batch of {max_batch_size}; \
+                 every batch will be rejected.",
+                config.min_batch_size
+            );
+        }
         let config = Arc::new(config);
+        let plan = Arc::new(plan);
         let model_path = Arc::new(model_path);
 
         let (command_tx, command_rx) = kanal::unbounded_async::<Command<I, O>>();
@@ -278,8 +258,8 @@ impl<I: Input, O: Output<I::Context>> Server<I, O> {
             command_rx,
             worker_txs,
             Arc::clone(&config),
-            input_name,
-            output_name,
+            plan,
+            max_batch_size,
         );
 
         Ok(Self {
@@ -304,7 +284,9 @@ impl<I: Input, O: Output<I::Context>> Server<I, O> {
     ///
     /// # Errors
     ///
-    /// Returns an error if the server channel is closed or inference fails.
+    /// Returns an error if the server channel is closed, the request's inputs
+    /// do not match the model, inference fails, an output cannot be split per
+    /// request, or postprocessing fails.
     pub async fn infer(&self, input: I) -> Result<O> {
         let (responder, response) = tokio::sync::oneshot::channel();
 

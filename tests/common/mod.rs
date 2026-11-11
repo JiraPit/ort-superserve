@@ -8,9 +8,9 @@
 pub mod onnx;
 
 use anyhow::Result;
-use ndarray::{Array1, ArrayD, ArrayViewD};
+use ndarray::Array1;
 use ort_superserve::{
-    Environment, Input, Output, Server, ServerConfig, create_env, helpers::batch_array,
+    Environment, Input, Inputs, Output, Outputs, Server, ServerConfig, create_env,
 };
 use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -156,6 +156,12 @@ pub struct Prepared {
     recorder: BatchRecorder,
 }
 
+impl From<Prepared> for Inputs {
+    fn from(prepared: Prepared) -> Self {
+        prepared.values.into()
+    }
+}
+
 impl Input for TestInput {
     type Preprocessed = Prepared;
     type Context = u32;
@@ -175,15 +181,14 @@ impl Input for TestInput {
         }
     }
 
-    fn batch(items: Vec<Self::Preprocessed>) -> Result<ArrayD<f32>> {
+    fn batch(items: Vec<Self::Preprocessed>) -> Result<Vec<Inputs>> {
         if let Some(first) = items.first() {
             first.recorder.record(items.len());
         }
         if items.iter().any(|item| item.fail_batch) {
             anyhow::bail!("injected batch failure");
         }
-        let arrays: Vec<_> = items.into_iter().map(|item| item.values).collect();
-        batch_array(&arrays)
+        Ok(items.into_iter().map(Inputs::from).collect())
     }
 }
 
@@ -192,8 +197,8 @@ pub struct TestOutput(pub Vec<f32>);
 
 /// Output that ignores the request context.
 impl Output<u32> for TestOutput {
-    async fn postprocess(raw: ArrayViewD<'_, f32>, _tag: u32) -> Result<Self> {
-        let values: Vec<f32> = raw.iter().copied().collect();
+    async fn postprocess(outputs: Outputs, _tag: u32) -> Result<Self> {
+        let values: Vec<f32> = outputs.first::<f32>()?.iter().copied().collect();
         match values.first() {
             Some(&v) if v == POSTPROCESS_ERROR_MARKER => {
                 anyhow::bail!("injected postprocess failure")
@@ -212,9 +217,9 @@ pub struct TaggedOutput {
 }
 
 impl Output<u32> for TaggedOutput {
-    async fn postprocess(raw: ArrayViewD<'_, f32>, tag: u32) -> Result<Self> {
+    async fn postprocess(outputs: Outputs, tag: u32) -> Result<Self> {
         Ok(TaggedOutput {
-            values: raw.iter().copied().collect(),
+            values: outputs.first::<f32>()?.iter().copied().collect(),
             tag,
         })
     }
